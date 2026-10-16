@@ -1,0 +1,639 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101a20">
+  <title>Oil Signal — Prices &amp; News</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #101a20;
+      --panel: #17242b;
+      --panel-light: #1c2b33;
+      --line: #30424a;
+      --text: #edf2ec;
+      --muted: #9aadae;
+      --green: #76d6a0;
+      --blue: #77c8ec;
+      --orange: #ffbb70;
+      --red: #ff8d82;
+      --yellow: #f3d17c;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(ellipse at 10% -20%, #263c39 0, transparent 42rem),
+        var(--bg);
+      color: var(--text);
+      font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    a { color: var(--blue); }
+    button, select { font: inherit; }
+
+    .shell { width: min(1120px, calc(100% - 36px)); margin: 0 auto; }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 30px 0 24px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .eyebrow, .label, .section-kicker {
+      color: var(--muted);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    h1, h2, p { margin-top: 0; }
+    h1 { margin-bottom: 4px; font-size: clamp(1.8rem, 4vw, 2.5rem); letter-spacing: -0.045em; }
+    h2 { margin-bottom: 5px; font-size: 1.15rem; }
+
+    .brand-line { display: flex; align-items: center; gap: 12px; }
+    .brand-mark { color: var(--green); font-size: 1.45rem; }
+    .subtitle, .updated { color: var(--muted); }
+    .header-actions { display: flex; align-items: center; gap: 14px; }
+
+    .button, .range-button {
+      padding: 8px 13px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .button:hover, .range-button:hover { border-color: var(--green); }
+    .button:focus-visible, .range-button:focus-visible, a:focus-visible {
+      outline: 2px solid var(--green);
+      outline-offset: 3px;
+    }
+
+    main { padding: 26px 0 50px; }
+    .section-heading { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin: 30px 0 14px; }
+    .section-heading:first-child { margin-top: 0; }
+    .section-heading p { margin: 0; color: var(--muted); }
+    .price-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; }
+
+    .card, .chart-card, .news-card {
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: linear-gradient(145deg, var(--panel-light), var(--panel));
+    }
+
+    .card { padding: 19px 20px; }
+    .card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    .symbol { color: var(--muted); font-size: 0.82rem; }
+    .price { margin: 15px 0 6px; font-size: clamp(2rem, 5vw, 2.8rem); font-variant-numeric: tabular-nums; letter-spacing: -0.055em; }
+    .change-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .change { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .positive { color: var(--green); }
+    .negative { color: var(--red); }
+    .neutral { color: var(--muted); }
+    .validity, .direction {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 8px;
+      border-radius: 99px;
+      background: #263841;
+      color: var(--muted);
+      font-size: 0.76rem;
+      font-weight: 700;
+    }
+
+    .validity.valid { background: #1b3a31; color: var(--green); }
+    .validity.stale, .validity.insufficient { background: #40351f; color: var(--yellow); }
+    .card-foot { margin: 16px 0 0; color: var(--muted); font-size: 0.82rem; }
+    .chart-card { padding: 17px 18px 12px; }
+    .chart-toolbar { display: flex; align-items: center; gap: 5px; }
+    .range-button { padding: 5px 10px; border-color: transparent; background: transparent; color: var(--muted); }
+    .range-button[aria-pressed="true"] { border-color: var(--line); background: #263841; color: var(--text); }
+    .chart-wrap { position: relative; overflow-x: auto; }
+    #price-chart { display: block; width: 100%; min-width: 620px; height: auto; overflow: visible; }
+    .grid-line { stroke: #30424a; stroke-dasharray: 3 6; }
+    .axis-text { fill: #9aadae; font-size: 12px; }
+    .series-wti, .series-brent { fill: none; stroke-width: 2.6; stroke-linejoin: round; stroke-linecap: round; }
+    .series-wti { stroke: var(--green); }
+    .series-brent { stroke: var(--blue); }
+    .point-wti { fill: var(--green); }
+    .point-brent { fill: var(--blue); }
+    .news-stem { stroke: var(--orange); stroke-width: 1.4; opacity: 0.65; }
+    .news-marker { fill: var(--orange); stroke: #17242b; stroke-width: 2; cursor: pointer; }
+    .news-marker:hover, .news-marker:focus { stroke: white; stroke-width: 3; outline: none; }
+    .chart-legend { display: flex; flex-wrap: wrap; gap: 18px; padding: 8px 0 0; color: var(--muted); font-size: 0.82rem; }
+    .legend-item { display: inline-flex; align-items: center; gap: 7px; }
+    .legend-line { width: 18px; height: 3px; border-radius: 4px; background: var(--green); }
+    .legend-line.brent { background: var(--blue); }
+    .legend-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--orange); }
+    .chart-note, .method-note { color: var(--muted); font-size: 0.82rem; }
+    .chart-note { margin: 11px 0 0; }
+    .method-note { margin: 13px 2px 0; }
+    .news-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; }
+    .news-card { padding: 15px 16px; transition: border-color 150ms, background 150ms; }
+    .news-card.highlight { border-color: var(--orange); background: #30291f; }
+    .news-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; color: var(--muted); font-size: 0.77rem; }
+    .news-source { color: var(--orange); font-weight: 700; }
+    .news-card h3 { margin: 0 0 7px; font-size: 1rem; line-height: 1.4; }
+    .news-card h3 a { color: var(--text); text-decoration-color: #6a7e80; text-underline-offset: 3px; }
+    .news-card h3 a:hover { color: var(--blue); }
+    .news-summary { margin: 0; color: #b4c2c0; font-size: 0.87rem; }
+    .empty, .error { padding: 24px; border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); text-align: center; }
+    .error { border-color: #774d48; color: #ffc1b8; }
+    .footnote { margin: 30px 0 0; padding-top: 15px; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.8rem; }
+
+    @media (max-width: 680px) {
+      .shell { width: min(100% - 24px, 1120px); }
+      header { align-items: flex-start; padding-top: 22px; }
+      .header-actions { align-items: flex-end; flex-direction: column-reverse; gap: 8px; }
+      .updated { text-align: right; font-size: 0.78rem; }
+      .price-grid, .news-list { grid-template-columns: 1fr; }
+      .section-heading { align-items: flex-start; flex-direction: column; }
+      .chart-toolbar { align-self: stretch; justify-content: space-between; }
+      .card { padding: 16px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div>
+        <div class="eyebrow">Public market monitor</div>
+        <div class="brand-line">
+          <span class="brand-mark" aria-hidden="true">◈</span>
+          <h1>Oil Signal</h1>
+        </div>
+        <div class="subtitle">Crude prices, direction &amp; energy headlines</div>
+      </div>
+      <div class="header-actions">
+        <div class="updated" id="last-updated">Loading latest data…</div>
+        <button class="button" id="refresh-button" type="button">Refresh</button>
+      </div>
+    </header>
+
+    <main>
+      <section aria-labelledby="market-title">
+        <div class="section-heading">
+          <div>
+            <div class="section-kicker">Market snapshot</div>
+            <h2 id="market-title">Crude benchmarks</h2>
+          </div>
+          <p>USD per barrel · direction vs previous daily close</p>
+        </div>
+        <div class="price-grid" id="price-cards" aria-live="polite"></div>
+        <p class="method-note">Sentiment is descriptive, not predictive. “Valid” means the quote has both closes and its provider timestamp is within 48 hours; stale or incomplete inputs are clearly marked.</p>
+      </section>
+
+      <section aria-labelledby="chart-title">
+        <div class="section-heading">
+          <div>
+            <div class="section-kicker">Price &amp; news timeline</div>
+            <h2 id="chart-title">Price history with published headlines</h2>
+          </div>
+          <div class="chart-toolbar" role="group" aria-label="Chart time range">
+            <button class="range-button" type="button" data-range="1" aria-pressed="false">24h</button>
+            <button class="range-button" type="button" data-range="7" aria-pressed="true">7d</button>
+            <button class="range-button" type="button" data-range="30" aria-pressed="false">30d</button>
+            <button class="range-button" type="button" data-range="all" aria-pressed="false">All</button>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-wrap">
+            <svg id="price-chart" viewBox="0 0 1000 410" role="img" aria-label="Oil prices and published news timeline"></svg>
+          </div>
+          <div class="chart-legend" aria-label="Chart legend">
+            <span class="legend-item"><span class="legend-line"></span> WTI crude</span>
+            <span class="legend-item"><span class="legend-line brent"></span> Brent crude</span>
+            <span class="legend-item"><span class="legend-dot"></span> Published news (select a marker to highlight)</span>
+          </div>
+          <p class="chart-note" id="chart-note">Loading price history…</p>
+        </div>
+      </section>
+
+      <section aria-labelledby="news-title">
+        <div class="section-heading">
+          <div>
+            <div class="section-kicker">Latest reporting</div>
+            <h2 id="news-title">Energy news</h2>
+          </div>
+          <p id="news-count"></p>
+        </div>
+        <div class="news-list" id="news-list" aria-live="polite"></div>
+      </section>
+
+      <p class="footnote">Price source: Yahoo Finance chart data. Headlines: OilPrice.com and the U.S. Energy Information Administration. News is shown as context only and is not classified as bullish or bearish. Data refreshes on the collection schedule; this page does not stream live quotes.</p>
+    </main>
+  </div>
+
+  <script>
+    "use strict";
+
+    const SVG_NS = "http://www.w3.org/2000/svg";
+    const priceCards = document.querySelector("#price-cards");
+    const chart = document.querySelector("#price-chart");
+    const newsList = document.querySelector("#news-list");
+    const chartNote = document.querySelector("#chart-note");
+    const dateFormatter = new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+      timeZone: "UTC"
+    });
+    let records = [];
+    let articles = [];
+    let rangeDays = 7;
+
+    function parseDate(value) {
+      if (!value) return null;
+      const date = new Date(value);
+      return Number.isFinite(date.getTime()) ? date : null;
+    }
+
+    function formatDate(value) {
+      const date = value instanceof Date ? value : parseDate(value);
+      return date ? `${dateFormatter.format(date)} UTC` : "Time unavailable";
+    }
+
+    function priceAssessment(quote) {
+      const price = Number(quote?.price);
+      const previous = Number(quote?.previous_close);
+      const timestamp = parseDate(quote?.price_timestamp);
+
+      if (!Number.isFinite(price) || price <= 0 ||
+          !Number.isFinite(previous) || previous <= 0) {
+        return {
+          status: "insufficient",
+          label: "Insufficient data",
+          direction: "unknown",
+          reason: "A positive current price and previous daily close are required."
+        };
+      }
+      if (!timestamp) {
+        return {
+          status: "insufficient",
+          label: "Unverified timestamp",
+          direction: "unknown",
+          reason: "The provider did not supply a usable quote timestamp."
+        };
+      }
+
+      const age = Date.now() - timestamp.getTime();
+      if (age < -5 * 60 * 1000) {
+        return {
+          status: "insufficient",
+          label: "Unverified timestamp",
+          direction: "unknown",
+          reason: "The provider quote timestamp is unexpectedly in the future."
+        };
+      }
+
+      const direction = price > previous ? "bullish" : price < previous ? "bearish" : "neutral";
+      if (age > 48 * 60 * 60 * 1000) {
+        return {
+          status: "stale",
+          label: "Stale quote",
+          direction,
+          reason: "The provider quote timestamp is more than 48 hours old."
+        };
+      }
+      return {
+        status: "valid",
+        label: "Valid · ≤48h",
+        direction,
+        reason: "Positive current and previous-close prices; quote timestamp is within 48 hours."
+      };
+    }
+
+    function element(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function renderPriceCards() {
+      priceCards.replaceChildren();
+      const latest = records.at(-1);
+      const quotes = latest?.prices || {};
+      const benchmarks = [
+        ["wti_crude", "WTI crude", "CL=F"],
+        ["brent_crude", "Brent crude", "BZ=F"]
+      ];
+
+      for (const [key, name, symbol] of benchmarks) {
+        const quote = quotes[key];
+        const card = element("article", "card");
+        const head = element("div", "card-head");
+        const identity = element("div");
+        identity.append(element("div", "label", name));
+        identity.append(element("div", "symbol", symbol));
+        head.append(identity);
+
+        if (!quote) {
+          head.append(element("span", "validity insufficient", "No recent quote"));
+          card.append(head, element("p", "price", "—"));
+          card.append(element("p", "card-foot", "The latest collection did not return this price."));
+          priceCards.append(card);
+          continue;
+        }
+
+        const assessment = priceAssessment(quote);
+        const validity = element("span", `validity ${assessment.status}`, assessment.label);
+        validity.title = assessment.reason;
+        head.append(validity);
+        card.append(head);
+
+        const currency = quote.currency || "USD";
+        const price = element("p", "price", `${currency} ${Number(quote.price).toFixed(2)}`);
+        card.append(price);
+
+        const change = Number(quote.change);
+        const percent = Number(quote.change_percent);
+        const changeRow = element("div", "change-row");
+        const hasChange = assessment.direction !== "unknown" &&
+          Number.isFinite(change) && Number.isFinite(percent);
+        const changeClass = !hasChange ? "change neutral" :
+          change > 0 ? "change positive" : change < 0 ? "change negative" : "change neutral";
+        changeRow.append(element("span", changeClass, hasChange
+          ? `${change > 0 ? "+" : ""}${change.toFixed(2)} (${percent > 0 ? "+" : ""}${percent.toFixed(2)}%)`
+          : "Change unavailable"));
+        changeRow.append(element("span", `direction ${assessment.direction}`,
+          assessment.direction === "unknown" ? "Direction unavailable" : assessment.direction));
+        card.append(changeRow);
+
+        const previousClose = Number(quote.previous_close);
+        const closeDescription = Number.isFinite(previousClose) && previousClose > 0
+          ? `previous close ${currency} ${previousClose.toFixed(2)}`
+          : "previous close unavailable";
+        const foot = element("p", "card-foot",
+          `Quote: ${formatDate(quote.price_timestamp)} · ${closeDescription}`);
+        card.append(foot);
+        priceCards.append(card);
+      }
+    }
+
+    function svgElement(tag, attrs = {}, text) {
+      const node = document.createElementNS(SVG_NS, tag);
+      for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function drawChart() {
+      chart.replaceChildren();
+      const pricePoints = records.flatMap(record => {
+        const time = parseDate(record.collected_at);
+        if (!time) return [];
+        return ["wti_crude", "brent_crude"].flatMap(key => {
+          const value = Number(record.prices?.[key]?.price);
+          return Number.isFinite(value) && value > 0 ? [{ key, time, value }] : [];
+        });
+      });
+      if (!pricePoints.length) {
+        chartNote.textContent = "No price history is available yet.";
+        chart.append(svgElement("text", { x: 500, y: 205, "text-anchor": "middle", class: "axis-text" }, "No price history yet"));
+        return;
+      }
+
+      const latestTime = Math.max(...pricePoints.map(point => point.time.getTime()));
+      const cutoff = rangeDays === "all" ? -Infinity : latestTime - Number(rangeDays) * 86400000;
+      const visiblePoints = pricePoints.filter(point => point.time.getTime() >= cutoff);
+      const times = visiblePoints.map(point => point.time.getTime());
+      let minTime = Math.min(...times);
+      let maxTime = Math.max(...times);
+      if (minTime === maxTime) {
+        minTime -= 12 * 60 * 60 * 1000;
+        maxTime += 12 * 60 * 60 * 1000;
+      }
+
+      const width = 1000;
+      const height = 410;
+      const left = 74;
+      const right = 24;
+      const top = 86;
+      const bottom = 350;
+      const values = visiblePoints.map(point => point.value);
+      let minValue = Math.min(...values);
+      let maxValue = Math.max(...values);
+      const padding = Math.max((maxValue - minValue) * 0.15, maxValue * 0.006);
+      minValue = Math.max(0, minValue - padding);
+      maxValue += padding;
+      if (minValue === maxValue) maxValue += 1;
+
+      const x = time => left + (time.getTime() - minTime) / (maxTime - minTime) * (width - left - right);
+      const y = value => bottom - (value - minValue) / (maxValue - minValue) * (bottom - top);
+
+      for (let index = 0; index <= 4; index += 1) {
+        const value = minValue + (maxValue - minValue) * index / 4;
+        const lineY = y(value);
+        chart.append(svgElement("line", { x1: left, x2: width - right, y1: lineY, y2: lineY, class: "grid-line" }));
+        chart.append(svgElement("text", { x: left - 10, y: lineY + 4, "text-anchor": "end", class: "axis-text" }, `$${value.toFixed(0)}`));
+      }
+
+      const visibleRecords = records.filter(record => {
+        const time = parseDate(record.collected_at);
+        return time && time.getTime() >= cutoff;
+      });
+      for (const key of ["wti_crude", "brent_crude"]) {
+        const series = visibleRecords.flatMap(record => {
+          const time = parseDate(record.collected_at);
+          const value = Number(record.prices?.[key]?.price);
+          return time && Number.isFinite(value) && value > 0 ? [{ time, value }] : [];
+        });
+        if (!series.length) continue;
+        const className = key === "wti_crude" ? "wti" : "brent";
+        const path = series.map((point, index) =>
+          `${index === 0 ? "M" : "L"} ${x(point.time).toFixed(1)} ${y(point.value).toFixed(1)}`
+        ).join(" ");
+        chart.append(svgElement("path", { d: path, class: `series-${className}` }));
+        if (series.length === 1) {
+          chart.append(svgElement("circle", { cx: x(series[0].time), cy: y(series[0].value), r: 4, class: `point-${className}` }));
+        }
+      }
+
+      const tickCount = 5;
+      for (let index = 0; index < tickCount; index += 1) {
+        const tickTime = new Date(minTime + (maxTime - minTime) * index / (tickCount - 1));
+        const tickX = x(tickTime);
+        chart.append(svgElement("text", { x: tickX, y: 382, "text-anchor": index === 0 ? "start" : index === tickCount - 1 ? "end" : "middle", class: "axis-text" },
+          new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", timeZone: "UTC" }).format(tickTime)));
+      }
+
+      const visibleNews = articles.flatMap(article => {
+        const time = parseDate(article.published_at) || parseDate(article.first_seen_at);
+        return time && time.getTime() >= minTime && time.getTime() <= maxTime ? [{ article, time }] : [];
+      }).sort((a, b) => a.time - b.time);
+      const clusters = [];
+      for (const item of visibleNews) {
+        const pointX = x(item.time);
+        let cluster = clusters.at(-1);
+        if (!cluster || pointX - cluster.x > 14) {
+          cluster = { x: pointX, items: [] };
+          clusters.push(cluster);
+        }
+        cluster.items.push(item.article);
+        cluster.x = cluster.items.reduce((sum, article) => {
+          const time = parseDate(article.published_at) || parseDate(article.first_seen_at);
+          return sum + x(time);
+        }, 0) / cluster.items.length;
+      }
+
+      for (const cluster of clusters) {
+        chart.append(svgElement("line", { x1: cluster.x, x2: cluster.x, y1: 40, y2: 70, class: "news-stem" }));
+        const marker = svgElement("circle", {
+          cx: cluster.x,
+          cy: 34,
+          r: Math.min(6 + Math.log2(cluster.items.length) * 2, 12),
+          class: "news-marker",
+          tabindex: "0",
+          role: "button",
+          "aria-label": `${cluster.items.length} news ${cluster.items.length === 1 ? "story" : "stories"}; highlight in the news list`
+        });
+        marker.append(svgElement("title", {}, `${cluster.items.length} published ${cluster.items.length === 1 ? "story" : "stories"} — select to highlight`));
+        const highlight = () => {
+          document.querySelectorAll(".news-card.highlight").forEach(card => card.classList.remove("highlight"));
+          const firstCard = [...document.querySelectorAll(".news-card")]
+            .find(card => card.dataset.articleId === cluster.items[0].id);
+          if (firstCard) {
+            firstCard.classList.add("highlight");
+            firstCard.scrollIntoView({ behavior: "smooth", block: "center" });
+            firstCard.focus({ preventScroll: true });
+          }
+        };
+        marker.addEventListener("click", highlight);
+        marker.addEventListener("keydown", event => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            highlight();
+          }
+        });
+        chart.append(marker);
+        if (cluster.items.length > 1) {
+          chart.append(svgElement("text", { x: cluster.x, y: 37, "text-anchor": "middle", fill: "#101a20", "font-size": 9, "font-weight": 800, "pointer-events": "none" }, String(cluster.items.length)));
+        }
+      }
+
+      chartNote.textContent = `${visibleRecords.length} collection${visibleRecords.length === 1 ? "" : "s"} shown. News markers align to publication time; stories outside the selected price window remain listed below.`;
+    }
+
+    function safeLink(value) {
+      try {
+        const url = new URL(value);
+        return ["https:", "http:"].includes(url.protocol) ? url.href : null;
+      } catch {
+        return null;
+      }
+    }
+
+    function renderNews() {
+      newsList.replaceChildren();
+      const sorted = [...articles].sort((a, b) =>
+        (parseDate(b.published_at)?.getTime() || 0) - (parseDate(a.published_at)?.getTime() || 0)
+      );
+      document.querySelector("#news-count").textContent = `${sorted.length} stories collected`;
+
+      for (const article of sorted) {
+        const card = element("article", "news-card");
+        card.dataset.articleId = article.id;
+        card.tabIndex = -1;
+        const meta = element("div", "news-meta");
+        meta.append(element("span", "news-source", article.source || "News"));
+        meta.append(element("time", "", formatDate(article.published_at || article.first_seen_at)));
+        card.append(meta);
+
+        const heading = element("h3");
+        const link = safeLink(article.url);
+        if (link) {
+          const anchor = element("a", "", article.title || "Untitled story");
+          anchor.href = link;
+          anchor.target = "_blank";
+          anchor.rel = "noopener noreferrer";
+          heading.append(anchor);
+        } else {
+          heading.textContent = article.title || "Untitled story";
+        }
+        card.append(heading);
+        if (article.summary) card.append(element("p", "news-summary", article.summary));
+        newsList.append(card);
+      }
+
+      if (!sorted.length) newsList.append(element("div", "empty", "No news stories have been collected yet."));
+    }
+
+    async function loadData() {
+      const updated = document.querySelector("#last-updated");
+      const refresh = document.querySelector("#refresh-button");
+      refresh.disabled = true;
+      updated.textContent = "Refreshing…";
+      try {
+        const indexResponse = await fetch(`data/oil/index.json?t=${Date.now()}`, { cache: "no-store" });
+        if (!indexResponse.ok) throw new Error(`Data index request failed (${indexResponse.status})`);
+        const index = await indexResponse.json();
+        if (!Array.isArray(index.files)) throw new Error("Data index has an invalid format");
+        const files = await Promise.all(index.files.map(async file => {
+          if (typeof file !== "string" || !/^\d{4}-\d{2}-\d{2}\.jsonl$/.test(file)) {
+            throw new Error("Data index contains an invalid filename");
+          }
+          const response = await fetch(`data/oil/${encodeURIComponent(file)}?t=${Date.now()}`, { cache: "no-store" });
+          if (!response.ok) throw new Error(`Could not load ${file} (${response.status})`);
+          return response.text();
+        }));
+
+        records = [];
+        articles = [];
+        for (const content of files) {
+          const lines = content.split(/\r?\n/).filter(Boolean);
+          for (const line of lines) {
+            const record = JSON.parse(line);
+            if (!record || typeof record !== "object" || !record.collected_at) continue;
+            records.push(record);
+            for (const article of record.news || []) {
+              articles.push({ ...article, first_seen_at: article.first_seen_at || record.collected_at });
+            }
+          }
+        }
+        records.sort((a, b) => (parseDate(a.collected_at)?.getTime() || 0) - (parseDate(b.collected_at)?.getTime() || 0));
+        renderPriceCards();
+        renderNews();
+        drawChart();
+        const latest = records.at(-1);
+        updated.textContent = latest ? `Data collected ${formatDate(latest.collected_at)}` : "No collection data yet";
+      } catch (error) {
+        console.error("Could not load oil monitor data:", error);
+        priceCards.replaceChildren(element("div", "error", "Could not load oil data. The dashboard data may not have been published yet."));
+        chart.replaceChildren();
+        chartNote.textContent = "Data could not be loaded.";
+        newsList.replaceChildren(element("div", "error", "Could not load news. Please try refreshing later."));
+        updated.textContent = "Data unavailable";
+      } finally {
+        refresh.disabled = false;
+      }
+    }
+
+    document.querySelector("#refresh-button").addEventListener("click", loadData);
+    document.querySelectorAll("[data-range]").forEach(button => {
+      button.addEventListener("click", () => {
+        rangeDays = button.dataset.range === "all" ? "all" : Number(button.dataset.range);
+        document.querySelectorAll("[data-range]").forEach(item =>
+          item.setAttribute("aria-pressed", String(item === button))
+        );
+        drawChart();
+      });
+    });
+
+    loadData();
+  </script>
+</body>
+</html>

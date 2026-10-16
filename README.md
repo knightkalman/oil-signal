@@ -65,7 +65,8 @@ Each run appends to that day's JSONL file under `data/oil/`, saves the SQLite
 news-deduplication database, and commits both to the repository. This retains
 the data in Git instead of relying on expiring workflow artifacts or a hosted
 disk. The workflow needs Actions to have read-and-write repository permissions;
-the workflow requests `contents: write` for this purpose.
+the workflow requests `contents: write` for this purpose. It also publishes the
+interactive dashboard to GitHub Pages after each collection.
 
 Push the workflow and worker to GitHub, then open **Actions** in the repository
 to confirm the workflow is enabled. Start a run using **Oil monitor** > **Run
@@ -73,6 +74,16 @@ workflow**, or wait for its next scheduled run. GitHub Actions is scheduled,
 not continuously running, and scheduled starts may be delayed. Git-backed
 history grows over time; keep an eye on repository size. In a public repository,
 collected news and prices are public along with the source code.
+
+The dashboard is at `https://<owner>.github.io/<repository>/` for a project
+repository. Enable GitHub Pages in the repository's **Settings** > **Pages**
+with **GitHub Actions** as the deployment source. Free GitHub Pages hosting
+requires a public repository; publishing also makes collected prices and news
+public. The dashboard charts WTI and Brent prices, marks published news on the
+timeline, and labels sentiment validity as valid, stale, or insufficient data.
+Validity requires positive current and previous-close prices and a provider
+quote timestamp no more than 48 hours old. Sentiment is a descriptive
+comparison to the previous daily close, not a forecast or investment advice.
 
 ### Run as a user service on Linux with systemd
 

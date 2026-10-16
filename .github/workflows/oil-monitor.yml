@@ -1,6 +1,13 @@
 name: Oil monitor
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/oil-monitor.yml"
+      - "oil_monitor.py"
+      - "site/**"
   schedule:
     - cron: "17 */6 * * *"
   workflow_dispatch:
@@ -42,3 +49,45 @@ jobs:
             git commit -m "Update oil monitor data"
             git push
           fi
+
+  deploy-dashboard:
+    needs: collect
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out repository data
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up dashboard data
+        run: |
+          mkdir -p site/data/oil
+          cp data/oil/*.jsonl site/data/oil/
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          files = sorted(path.name for path in Path("site/data/oil").glob("*.jsonl"))
+          Path("site/data/oil/index.json").write_text(
+              json.dumps({"files": files}), encoding="utf-8"
+          )
+          PY
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload dashboard
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy dashboard
+        id: deployment
+        uses: actions/deploy-pages@v4
