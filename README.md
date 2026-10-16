@@ -38,6 +38,36 @@ Sentiment describes the price move versus the previous daily close; it is not
 an assessment of the news or investment advice. On the first price record, the
 sentiment is `unknown` if the provider has not supplied a previous close.
 
+### AI analysis of news
+
+Each scheduled run passes newly collected headlines and feed summaries to
+Google's managed **Antigravity agent** through the Gemini Interactions API.
+This is a headless API integration, not the Antigravity VS Code plugin; the
+plugin runs in the editor and is not available to GitHub Actions. The
+integration uses the managed agent ID `antigravity-preview-09-2026` and asks
+for schema-constrained JSON describing likely oil-price impact, a short
+summary, a textual evidence-validity label, a rationale, and uncalibrated
+confidence. Tools are disabled for this classification request. The agent
+receives the public feed text; it is treated as untrusted input and is not
+independently fact-checked. The request opts out of interaction storage.
+
+To enable it, create a Gemini API key in [Google AI Studio](https://aistudio.google.com/app/apikey),
+then add it to this public repository under **Settings** > **Secrets and
+variables** > **Actions** > **New repository secret**, named exactly
+`GEMINI_API_KEY`. Do not commit the key or put it in the workflow file. Google
+API access may have free-tier limits or usage charges; check the current
+[Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing) and
+[terms](https://ai.google.dev/gemini-api/terms) first. The managed Antigravity
+agent is a preview API and availability or pricing may change.
+
+If the secret is missing, the collector still saves prices and news and marks
+`news_analysis.status` as `skipped`. If the API call or output validation
+fails, it records `failed` and the error rather than inventing an analysis.
+Successful per-article labels distinguish expected oil-price impact from
+evidence quality: `validity` means only how clearly the supplied text supports
+the model's interpretation, not whether its claims are true. The dashboard
+shows direction, evidence quality, summary, and uncalibrated model confidence.
+
 Price data comes from Yahoo Finance's public chart endpoint for `CL=F` (WTI)
 and `BZ=F` (Brent). News comes from OilPrice.com and the U.S. Energy
 Information Administration's Today in Energy RSS feed. Individual source

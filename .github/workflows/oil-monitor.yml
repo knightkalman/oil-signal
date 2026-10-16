@@ -6,7 +6,9 @@ on:
       - main
     paths:
       - ".github/workflows/oil-monitor.yml"
+      - "analyze_news.py"
       - "oil_monitor.py"
+      - "tests/**"
       - "site/**"
   schedule:
     - cron: "17 */6 * * *"
@@ -39,6 +41,11 @@ jobs:
             --output "$output_path" \
             --state-db data/oil_monitor_state.sqlite3
           echo "OIL_OUTPUT_PATH=$output_path" >> "$GITHUB_ENV"
+
+      - name: Analyze new headlines with the managed Antigravity agent
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python analyze_news.py --file "$OIL_OUTPUT_PATH"
 
       - name: Save collected data
         run: |

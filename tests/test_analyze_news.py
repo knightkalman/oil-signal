@@ -1,0 +1,135 @@
+import json
+from pathlib import Path
+import tempfile
+import unittest
+from urllib.error import URLError
+
+from analyze_news import AGENT, analyze_file, call_agent, validate_results
+
+
+def sample_articles():
+    return [
+        {
+            "id": "oilprice:article-1",
+            "source": "oilprice",
+            "title": "Crude prices rise on supply disruptions",
+            "published_at": "2026-10-16T10:00:00Z",
+            "summary": "Output disruptions reduce available supply.",
+        },
+        {
+            "id": "eia:article-2",
+            "source": "eia",
+            "title": "Inventories rise more than expected",
+            "published_at": "2026-10-16T11:00:00Z",
+            "summary": "Crude inventories increased.",
+        },
+    ]
+
+
+def sample_results(articles):
+    return {
+        "articles": [
+            {
+                "id": article["id"],
+                "summary": "Concise summary.",
+                "direction": "bullish",
+                "confidence": 72,
+                "validity": "supported",
+                "rationale": "The supplied text reports a crude supply disruption.",
+            }
+            for article in articles
+        ]
+    }
+
+
+class Response:
+    def __init__(self, payload):
+        self.payload = json.dumps(payload).encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return None
+
+    def read(self):
+        return self.payload
+
+
+class NewsAnalysisTests(unittest.TestCase):
+    def test_validates_complete_structured_results(self):
+        articles = sample_articles()
+        results = validate_results(sample_results(articles), articles)
+        self.assertEqual(set(results), {article["id"] for article in articles})
+        self.assertEqual(results["oilprice:article-1"]["direction"], "bullish")
+
+    def test_rejects_missing_results_and_invalid_confidence(self):
+        articles = sample_articles()
+        with self.assertRaisesRegex(ValueError, "every input"):
+            validate_results({"articles": sample_results(articles)["articles"][:1]}, articles)
+
+        invalid = sample_results(articles)
+        invalid["articles"][0]["confidence"] = 101
+        with self.assertRaisesRegex(ValueError, "confidence"):
+            validate_results(invalid, articles)
+
+    def test_agent_request_disables_tools_and_persists_nothing(self):
+        articles = sample_articles()
+        captured = {}
+
+        def fake_opener(request, timeout):
+            captured["body"] = json.loads(request.data)
+            captured["headers"] = request.headers
+            captured["timeout"] = timeout
+            return Response({"output_text": json.dumps(sample_results(articles))})
+
+        results = call_agent(articles, "test-api-key", opener=fake_opener)
+        self.assertEqual(len(results), 2)
+        self.assertEqual(captured["body"]["agent"], AGENT)
+        self.assertEqual(captured["body"]["tools"], [])
+        self.assertFalse(captured["body"]["store"])
+        self.assertEqual(captured["headers"]["X-goog-api-key"], "test-api-key")
+
+    def test_missing_key_is_explicit_and_preserves_collection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "collection.jsonl"
+            article = sample_articles()[0]
+            record = {"collected_at": "2026-10-16T12:00:00Z", "news": [article]}
+            path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+            result = analyze_file(path, None, timestamp="2026-10-16T12:01:00Z")
+            saved = json.loads(path.read_text(encoding="utf-8"))
+
+            self.assertEqual(result["status"], "skipped")
+            self.assertIn("GEMINI_API_KEY", result["error"])
+            self.assertEqual(saved["news"][0]["id"], article["id"])
+            self.assertNotIn("analysis", saved["news"][0])
+
+    def test_api_error_is_recorded_without_dropping_collected_news(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "collection.jsonl"
+            articles = sample_articles()
+            path.write_text(
+                json.dumps({"collected_at": "2026-10-16T12:00:00Z", "news": articles})
+                + "\n",
+                encoding="utf-8",
+            )
+
+            def failing_opener(_request, timeout):
+                raise URLError("network unavailable")
+
+            result = analyze_file(
+                path,
+                "test-api-key",
+                timestamp="2026-10-16T12:01:00Z",
+                opener=failing_opener,
+            )
+            saved = json.loads(path.read_text(encoding="utf-8"))
+
+            self.assertEqual(result["status"], "failed")
+            self.assertIn("network unavailable", result["error"])
+            self.assertEqual(len(saved["news"]), 2)
+
+
+if __name__ == "__main__":
+    unittest.main()

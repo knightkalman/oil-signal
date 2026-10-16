@@ -147,6 +147,16 @@
     .news-card h3 a { color: var(--text); text-decoration-color: #6a7e80; text-underline-offset: 3px; }
     .news-card h3 a:hover { color: var(--blue); }
     .news-summary { margin: 0; color: #b4c2c0; font-size: 0.87rem; }
+    .analysis-box { margin-top: 13px; padding: 11px 12px; border: 1px solid #3a5053; border-radius: 9px; background: #142126; }
+    .analysis-head { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-bottom: 7px; }
+    .analysis-direction, .analysis-evidence { padding: 2px 7px; border-radius: 99px; background: #263841; color: var(--muted); font-size: 0.72rem; font-weight: 750; text-transform: uppercase; letter-spacing: 0.035em; }
+    .analysis-direction.bullish, .analysis-evidence.supported { background: #1b3a31; color: var(--green); }
+    .analysis-direction.bearish { background: #402b29; color: var(--red); }
+    .analysis-direction.mixed, .analysis-direction.unclear, .analysis-evidence.limited, .analysis-evidence.insufficient { background: #40351f; color: var(--yellow); }
+    .analysis-confidence { color: var(--muted); font-size: 0.75rem; }
+    .analysis-copy { margin: 0; color: #c3cfcb; font-size: 0.84rem; }
+    .analysis-copy + .analysis-copy { margin-top: 5px; }
+    .analysis-unavailable { color: var(--yellow); font-size: 0.82rem; }
     .empty, .error { padding: 24px; border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); text-align: center; }
     .error { border-color: #774d48; color: #ffc1b8; }
     .footnote { margin: 30px 0 0; padding-top: 15px; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.8rem; }
@@ -234,7 +244,7 @@
         <div class="news-list" id="news-list" aria-live="polite"></div>
       </section>
 
-      <p class="footnote">Price source: Yahoo Finance chart data. Headlines: OilPrice.com and the U.S. Energy Information Administration. News is shown as context only and is not classified as bullish or bearish. Data refreshes on the collection schedule; this page does not stream live quotes.</p>
+      <p class="footnote">Price source: Yahoo Finance chart data. Headlines: OilPrice.com and the U.S. Energy Information Administration. The managed Antigravity agent estimates each headline's potential oil-price direction from the supplied text only; it does not independently verify claims. Confidence is not calibrated and this is not investment advice. Data refreshes on the collection schedule; this page does not stream live quotes.</p>
     </main>
   </div>
 
@@ -566,6 +576,36 @@
         }
         card.append(heading);
         if (article.summary) card.append(element("p", "news-summary", article.summary));
+        if (article.analysis) {
+          const analysis = element("div", "analysis-box");
+          const head = element("div", "analysis-head");
+          head.append(element("span", `analysis-direction ${article.analysis.direction}`,
+            `Oil impact: ${article.analysis.direction}`));
+          head.append(element("span", `analysis-evidence ${article.analysis.validity}`,
+            `Evidence: ${article.analysis.validity}`));
+          const confidence = Number(article.analysis.confidence);
+          if (Number.isInteger(confidence)) {
+            head.append(element("span", "analysis-confidence",
+              `${confidence}% model confidence · not calibrated`));
+          }
+          analysis.append(head);
+          if (article.analysis.summary) {
+            analysis.append(element("p", "analysis-copy", article.analysis.summary));
+          }
+          if (article.analysis.rationale) {
+            analysis.append(element("p", "analysis-copy", article.analysis.rationale));
+          }
+          card.append(analysis);
+        } else if (article.analysis_status === "skipped" ||
+                   article.analysis_status === "failed") {
+          card.append(element(
+            "p",
+            "analysis-unavailable",
+            article.analysis_status === "skipped"
+              ? "AI news analysis skipped: GEMINI_API_KEY is not configured."
+              : "AI news analysis failed for this collection; see the collection record for details."
+          ));
+        }
         newsList.append(card);
       }
 
@@ -600,7 +640,11 @@
             if (!record || typeof record !== "object" || !record.collected_at) continue;
             records.push(record);
             for (const article of record.news || []) {
-              articles.push({ ...article, first_seen_at: article.first_seen_at || record.collected_at });
+              articles.push({
+                ...article,
+                first_seen_at: article.first_seen_at || record.collected_at,
+                analysis_status: record.news_analysis?.status || "not_configured"
+              });
             }
           }
         }
