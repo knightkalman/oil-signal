@@ -1,0 +1,15 @@
+[Unit]
+Description=Oil prices and energy news monitor
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Desktop/git/test
+ExecStart=/usr/bin/python3 %h/Desktop/git/test/oil_monitor.py
+Restart=on-failure
+RestartSec=15s
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

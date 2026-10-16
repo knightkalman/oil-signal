@@ -1,0 +1,11 @@
+services:
+  - type: worker
+    name: oil-monitor
+    runtime: python
+    plan: starter
+    buildCommand: python -m py_compile oil_monitor.py
+    startCommand: python oil_monitor.py --interval 900 --output /var/data/oil_monitor.jsonl --state-db /var/data/oil_monitor_state.sqlite3
+    disk:
+      name: oil-monitor-data
+      mountPath: /var/data
+      sizeGB: 1
