@@ -1,0 +1,44 @@
+name: Oil monitor
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: oil-monitor
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Collect oil prices and news
+        run: |
+          output_path="data/oil/$(date -u +%F).jsonl"
+          python oil_monitor.py \
+            --once \
+            --output "$output_path" \
+            --state-db data/oil_monitor_state.sqlite3
+          echo "OIL_OUTPUT_PATH=$output_path" >> "$GITHUB_ENV"
+
+      - name: Save collected data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f "$OIL_OUTPUT_PATH" data/oil_monitor_state.sqlite3
+          if ! git diff --cached --quiet; then
+            git commit -m "Update oil monitor data"
+            git push
+          fi

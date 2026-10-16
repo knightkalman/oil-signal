@@ -57,6 +57,23 @@ Render's `starter` worker plan and persistent disk are paid resources; review
 the current price in Render before applying the Blueprint. The worker polls
 every 15 minutes and automatically restarts if it exits unexpectedly.
 
+### Run on GitHub Actions without a paid server
+
+The included `.github/workflows/oil-monitor.yml` runs one collection every six
+hours and also supports manual runs from the repository's **Actions** tab.
+Each run appends to that day's JSONL file under `data/oil/`, saves the SQLite
+news-deduplication database, and commits both to the repository. This retains
+the data in Git instead of relying on expiring workflow artifacts or a hosted
+disk. The workflow needs Actions to have read-and-write repository permissions;
+the workflow requests `contents: write` for this purpose.
+
+Push the workflow and worker to GitHub, then open **Actions** in the repository
+to confirm the workflow is enabled. Start a run using **Oil monitor** > **Run
+workflow**, or wait for its next scheduled run. GitHub Actions is scheduled,
+not continuously running, and scheduled starts may be delayed. Git-backed
+history grows over time; keep an eye on repository size. In a public repository,
+collected news and prices are public along with the source code.
+
 ### Run as a user service on Linux with systemd
 
 From the project directory, install and start the included service:
