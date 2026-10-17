@@ -12,7 +12,7 @@ Requires Python 3.10 or newer; there are no third-party dependencies.
 python3 oil_monitor.py
 ```
 
-The worker runs continuously, polling every 15 minutes by default. Stop it
+The worker runs continuously, polling every five minutes by default. Stop it
 with Ctrl+C. To collect only one cycle:
 
 ```sh
@@ -42,6 +42,12 @@ sentiment is `unknown` if the provider has not supplied a previous close.
 
 Each scheduled run passes newly collected headlines and feed summaries to
 Google's managed **Antigravity agent** through the Gemini Interactions API.
+At most once an hour, it also reassesses up to 20 older stories whose
+assessments are at least 24 hours old, retaining the previous assessments.
+For these reassessments, it provides observed WTI/Brent price moves since
+publication as context; the agent is instructed not to treat those moves as
+proof that a story caused them. The schedule state is stored in
+`data/oil_analysis_state.json`.
 This is a headless API integration, not the Antigravity VS Code plugin; the
 plugin runs in the editor and is not available to GitHub Actions. The
 integration uses the managed agent ID `antigravity-preview-09-2026` and asks
@@ -69,7 +75,8 @@ the model's interpretation, not whether its claims are true. The dashboard
 shows direction, evidence quality, summary, and uncalibrated model confidence.
 
 Price data comes from Yahoo Finance's public chart endpoint for `CL=F` (WTI)
-and `BZ=F` (Brent), including five days of hourly history for charting. News
+and `BZ=F` (Brent), using one-minute provider data and retaining each
+collection's latest observation to limit duplicate storage. News
 comes from OilPrice.com, EIA Today in Energy, EIA press releases, BBC Business,
 and CNBC Business. Broad business feeds are filtered for oil, fuel, gas, and
 energy topics. Individual source failures are logged and included in that
@@ -86,16 +93,17 @@ Deploy it by pushing this project to GitHub, then in Render choose **New** >
 **Blueprint**, connect the repository, and apply the `render.yaml` Blueprint.
 Render's `starter` worker plan and persistent disk are paid resources; review
 the current price in Render before applying the Blueprint. The worker polls
-every 15 minutes and automatically restarts if it exits unexpectedly.
+every five minutes and automatically restarts if it exits unexpectedly.
 
 ### Run on GitHub Actions without a paid server
 
-The included `.github/workflows/oil-monitor.yml` runs one collection every two
-hours and also supports manual runs from the repository's **Actions** tab.
+The included `.github/workflows/oil-monitor.yml` runs one collection every five
+minutes and also supports manual runs from the repository's **Actions** tab.
 Each run appends to that day's JSONL file under `data/oil/`, saves the SQLite
-news-deduplication database, and commits both to the repository. This retains
-the data in Git instead of relying on expiring workflow artifacts or a hosted
-disk. The workflow needs Actions to have read-and-write repository permissions;
+news-deduplication database and reassessment schedule state, and commits them
+to the repository. This retains the data in Git instead of relying on expiring
+workflow artifacts or a hosted disk. The workflow needs Actions to have
+read-and-write repository permissions;
 the workflow requests `contents: write` for this purpose. It also publishes the
 interactive dashboard to GitHub Pages after each collection.
 
@@ -115,9 +123,13 @@ timeline, and labels sentiment validity as valid, stale, or insufficient data.
 Validity requires positive current and previous-close prices and a provider
 quote timestamp no more than 48 hours old. Sentiment is a descriptive
 comparison to the previous daily close, not a forecast or investment advice.
-The chart plots hourly provider prices (five-day lookback), overlays each
-collection's bullish/bearish/neutral direction marker, and defaults to a
-24-hour view. Markers link to corresponding published stories.
+The chart plots collected provider-price observations, overlays each
+collection's bullish/bearish/neutral price-direction marker, and colors news
+markers using the latest Antigravity assessment (bullish, bearish, mixed,
+neutral, unclear, or unassessed). News markers link to corresponding
+published stories. GitHub Actions and the provider can delay five-minute
+updates; an open dashboard re-fetches the published data every five minutes.
+This is scheduled collection, not a live quote stream.
 
 ### Run as a user service on Linux with systemd
 

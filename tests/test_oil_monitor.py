@@ -2,11 +2,11 @@ import json
 from unittest import TestCase
 from unittest.mock import patch
 
-from oil_monitor import fetch_price, parse_feed
+from oil_monitor import fetch_price, parse_args, parse_feed
 
 
 class OilPriceHistoryTests(TestCase):
-    def test_fetch_price_includes_hourly_history_and_daily_sentiment(self):
+    def test_fetch_price_includes_latest_minute_observation_and_daily_sentiment(self):
         payload = {
             "chart": {
                 "result": [
@@ -37,9 +37,13 @@ class OilPriceHistoryTests(TestCase):
         self.assertEqual(result["previous_close"], 81.0)
         self.assertEqual(result["change"], 1.5)
         self.assertEqual(result["price_change_sentiment"], "bullish")
-        self.assertEqual([point["price"] for point in result["history"]], [82.0, 82.5])
+        self.assertEqual([point["price"] for point in result["history"]], [82.5])
         self.assertEqual(result["price_timestamp"], result["history"][-1]["timestamp"])
-        self.assertIn("interval=60m", result["source_url"])
+        self.assertIn("interval=1m", result["source_url"])
+
+    def test_worker_default_collection_interval_is_five_minutes(self):
+        with patch("sys.argv", ["oil_monitor.py", "--once"]):
+            self.assertEqual(parse_args().interval, 300)
 
     def test_price_fallback_uses_latest_hour_when_market_quote_missing(self):
         payload = {
@@ -61,6 +65,7 @@ class OilPriceHistoryTests(TestCase):
 
         self.assertEqual(result["price"], 82.0)
         self.assertEqual(result["price_timestamp"], result["history"][-1]["timestamp"])
+        self.assertEqual(len(result["history"]), 1)
 
 
 class EnergyNewsFeedTests(TestCase):

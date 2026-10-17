@@ -59,8 +59,8 @@ NEWS_FEEDS = {
         ),
     },
 }
-PRICE_HISTORY_RANGE = "5d"
-PRICE_HISTORY_INTERVAL = "60m"
+PRICE_HISTORY_RANGE = "1d"
+PRICE_HISTORY_INTERVAL = "1m"
 
 
 def utc_now() -> str:
@@ -163,7 +163,11 @@ def fetch_price(name: str, symbol: str) -> dict[str, object]:
             history[matching_points[-1]] = quote_point
         else:
             history.append(quote_point)
-    history.sort(key=lambda point: point["timestamp"])
+    history = (
+        [{"timestamp": quote_timestamp, "price": float(current_price)}]
+        if quote_timestamp
+        else []
+    )
 
     change, change_percent, sentiment = sentiment_for_change(
         float(current_price),
@@ -327,8 +331,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--interval",
         type=int,
-        default=900,
-        help="Seconds between collection cycles (default: 900).",
+        default=300,
+        help="Seconds between collection cycles (default: 300).",
     )
     parser.add_argument(
         "--output",

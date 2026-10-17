@@ -11,7 +11,7 @@ on:
       - "tests/**"
       - "site/**"
   schedule:
-    - cron: "17 */2 * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -42,16 +42,23 @@ jobs:
             --state-db data/oil_monitor_state.sqlite3
           echo "OIL_OUTPUT_PATH=$output_path" >> "$GITHUB_ENV"
 
-      - name: Analyze new headlines with the managed Antigravity agent
+      - name: Analyze new and due older headlines with the managed Antigravity agent
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python analyze_news.py --file "$OIL_OUTPUT_PATH"
+        run: |
+          python analyze_news.py \
+            --file "$OIL_OUTPUT_PATH" \
+            --data-dir data/oil \
+            --state-file data/oil_analysis_state.json \
+            --reassess-interval 3600 \
+            --reassess-cooldown 86400 \
+            --max-reassess-articles 20
 
       - name: Save collected data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f "$OIL_OUTPUT_PATH" data/oil_monitor_state.sqlite3
+          git add -f data/oil/ data/oil_monitor_state.sqlite3 data/oil_analysis_state.json
           if ! git diff --cached --quiet; then
             git commit -m "Update oil monitor data"
             git push

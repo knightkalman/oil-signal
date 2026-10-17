@@ -133,6 +133,10 @@
     .sentiment-marker.neutral { fill: var(--yellow); }
     .news-stem { stroke: var(--orange); stroke-width: 1.4; opacity: 0.65; }
     .news-marker { fill: var(--orange); stroke: #17242b; stroke-width: 2; cursor: pointer; }
+    .news-marker.sentiment-bullish, .news-stem.sentiment-bullish { fill: var(--green); stroke: var(--green); }
+    .news-marker.sentiment-bearish, .news-stem.sentiment-bearish { fill: var(--red); stroke: var(--red); }
+    .news-marker.sentiment-mixed, .news-marker.sentiment-neutral, .news-marker.sentiment-unclear,
+    .news-stem.sentiment-mixed, .news-stem.sentiment-neutral, .news-stem.sentiment-unclear { fill: var(--yellow); stroke: var(--yellow); }
     .news-marker:hover, .news-marker:focus { stroke: white; stroke-width: 3; outline: none; }
     .chart-legend { display: flex; flex-wrap: wrap; gap: 18px; padding: 8px 0 0; color: var(--muted); font-size: 0.82rem; }
     .legend-item { display: inline-flex; align-items: center; gap: 7px; }
@@ -231,10 +235,13 @@
           <div class="chart-legend" aria-label="Chart legend">
             <span class="legend-item"><span class="legend-line"></span> WTI crude</span>
             <span class="legend-item"><span class="legend-line brent"></span> Brent crude</span>
-            <span class="legend-item"><span class="legend-dot"></span> Published news (select a marker to highlight)</span>
-            <span class="legend-item"><span class="positive">▲</span> Bullish</span>
-            <span class="legend-item"><span class="negative">▼</span> Bearish</span>
-            <span class="legend-item"><span class="neutral">◆</span> Neutral</span>
+            <span class="legend-item"><span class="legend-dot"></span> Unassessed news</span>
+            <span class="legend-item"><span class="positive">●</span> Bullish news</span>
+            <span class="legend-item"><span class="negative">●</span> Bearish news</span>
+            <span class="legend-item"><span class="neutral">●</span> Mixed / neutral news</span>
+            <span class="legend-item"><span class="positive">▲</span> Price above previous close</span>
+            <span class="legend-item"><span class="negative">▼</span> Price below previous close</span>
+            <span class="legend-item"><span class="neutral">◆</span> Price unchanged</span>
           </div>
           <p class="chart-note" id="chart-note">Loading price history…</p>
         </div>
@@ -251,7 +258,7 @@
         <div class="news-list" id="news-list" aria-live="polite"></div>
       </section>
 
-      <p class="footnote">Price source: Yahoo Finance hourly chart data. Headlines: OilPrice.com, the U.S. Energy Information Administration, BBC Business, and CNBC Business. The managed Antigravity agent estimates each headline's potential oil-price direction from the supplied text only; it does not independently verify claims. Confidence is not calibrated and this is not investment advice. Data refreshes every two hours; this page does not stream live quotes.</p>
+      <p class="footnote">Price source: Yahoo Finance chart data. Headlines: OilPrice.com, the U.S. Energy Information Administration, BBC Business, and CNBC Business. New headlines are assessed by the managed Antigravity agent; older stories are reassessed hourly in batches of up to 20, with observed price moves shown as context rather than causal evidence. Claims are not independently verified, confidence is not calibrated, and this is not investment advice. Collection and open-dashboard refresh run every five minutes when GitHub Actions and the data provider are available; updates may be delayed.</p>
     </main>
   </div>
 
@@ -546,17 +553,31 @@
       }
 
       for (const cluster of clusters) {
-        chart.append(svgElement("line", { x1: cluster.x, x2: cluster.x, y1: 40, y2: 70, class: "news-stem" }));
+        const directions = [...new Set(cluster.items
+          .map(article => article.analysis?.direction)
+          .filter(direction => ["bullish", "bearish", "mixed", "neutral", "unclear"].includes(direction)))];
+        const sentiment = directions.length === 0 ? "unassessed" :
+          directions.length === 1 ? directions[0] : "mixed";
+        const sentimentLabel = directions.length === 0 ? "unassessed" :
+          directions.length === 1 ? directions[0] : "mixed";
+        chart.append(svgElement("line", {
+          x1: cluster.x, x2: cluster.x, y1: 40, y2: 70,
+          class: `news-stem sentiment-${sentiment}`
+        }));
         const marker = svgElement("circle", {
           cx: cluster.x,
           cy: 34,
           r: Math.min(6 + Math.log2(cluster.items.length) * 2, 12),
-          class: "news-marker",
+          class: `news-marker sentiment-${sentiment}`,
           tabindex: "0",
           role: "button",
-          "aria-label": `${cluster.items.length} news ${cluster.items.length === 1 ? "story" : "stories"}; highlight in the news list`
+          "aria-label": `${cluster.items.length} ${sentimentLabel} news ${cluster.items.length === 1 ? "story" : "stories"}; select to highlight in the news list`
         });
-        marker.append(svgElement("title", {}, `${cluster.items.length} published ${cluster.items.length === 1 ? "story" : "stories"} — select to highlight`));
+        marker.append(svgElement(
+          "title",
+          {},
+          `${cluster.items.length} ${sentimentLabel} news ${cluster.items.length === 1 ? "story" : "stories"} — select to highlight`
+        ));
         const highlight = () => {
           document.querySelectorAll(".news-card.highlight").forEach(card => card.classList.remove("highlight"));
           const firstCard = [...document.querySelectorAll(".news-card")]
@@ -582,7 +603,7 @@
 
       const latestPriceTime = new Date(latestTime);
       const visibleHours = rangeDays === "all" ? "all available history" : `last ${rangeDays} day${rangeDays === 1 ? "" : "s"}`;
-      chartNote.textContent = `${visiblePoints.length} hourly price points shown for the ${visibleHours}. Latest provider quote: ${formatDate(latestPriceTime)}. Sentiment markers show each collected quote's direction versus its previous daily close; hover for quote validity.`;
+      chartNote.textContent = `${visiblePoints.length} collected price observations shown for the ${visibleHours}. Latest provider quote: ${formatDate(latestPriceTime)}. News markers are colored by the latest Antigravity assessment; price triangles show direction versus the previous daily close.`;
     }
 
     function safeLink(value) {
@@ -630,6 +651,10 @@
             `Oil impact: ${article.analysis.direction}`));
           head.append(element("span", `analysis-evidence ${article.analysis.validity}`,
             `Evidence: ${article.analysis.validity}`));
+          if (article.analysis.assessment_type === "reassessment") {
+            head.append(element("span", "analysis-confidence",
+              `Reassessed · revision ${article.analysis.revision || 2}`));
+          }
           const confidence = Number(article.analysis.confidence);
           if (Number.isInteger(confidence)) {
             head.append(element("span", "analysis-confidence",
@@ -641,6 +666,19 @@
           }
           if (article.analysis.rationale) {
             analysis.append(element("p", "analysis-copy", article.analysis.rationale));
+          }
+          const marketContext = article.analysis.market_context || {};
+          const moves = Object.entries(marketContext).map(([symbol, context]) =>
+            `${symbol === "wti_crude" ? "WTI" : "Brent"} ${context.change_percent > 0 ? "+" : ""}${context.change_percent}% since publication`
+          );
+          if (moves.length) {
+            analysis.append(element(
+              "p",
+              "analysis-copy",
+              `Observed market move (not attribution): ${moves.join("; ")}. Assessed ${formatDate(article.analysis.assessed_at)}.`
+            ));
+          } else if (article.analysis.assessed_at) {
+            analysis.append(element("p", "analysis-copy", `Assessed ${formatDate(article.analysis.assessed_at)}.`));
           }
           card.append(analysis);
         } else if (article.analysis_status === "skipped" ||
@@ -724,6 +762,7 @@
       });
     });
 
+    window.setInterval(loadData, 5 * 60 * 1000);
     loadData();
   </script>
 </body>

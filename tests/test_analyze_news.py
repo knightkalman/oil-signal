@@ -130,6 +130,96 @@ class NewsAnalysisTests(unittest.TestCase):
             self.assertIn("network unavailable", result["error"])
             self.assertEqual(len(saved["news"]), 2)
 
+    def test_reassesses_old_news_with_price_context_and_preserves_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data_dir = Path(directory) / "oil"
+            data_dir.mkdir()
+            old_path = data_dir / "2026-10-16.jsonl"
+            current_path = data_dir / "2026-10-17.jsonl"
+            old_articles = sample_articles()
+            old_articles[0]["analysis"] = {
+                **sample_results([old_articles[0]])["articles"][0],
+                "assessed_at": "2026-10-16T08:00:00Z",
+                "revision": 1,
+            }
+            old_articles[1]["analysis"] = {
+                **sample_results([old_articles[1]])["articles"][0],
+                "assessed_at": "2026-10-16T09:00:00Z",
+                "revision": 1,
+            }
+            old_path.write_text(json.dumps({
+                "collected_at": "2026-10-16T11:00:00Z",
+                "prices": {
+                    "wti_crude": {"history": [
+                        {"timestamp": "2026-10-16T10:00:00Z", "price": 80.0}
+                    ]},
+                    "brent_crude": {"history": [
+                        {"timestamp": "2026-10-16T10:00:00Z", "price": 90.0}
+                    ]},
+                },
+                "news": old_articles,
+            }) + "\n", encoding="utf-8")
+            current_path.write_text(json.dumps({
+                "collected_at": "2026-10-17T12:00:00Z",
+                "prices": {
+                    "wti_crude": {"history": [
+                        {"timestamp": "2026-10-17T12:00:00Z", "price": 88.0}
+                    ]},
+                    "brent_crude": {"history": [
+                        {"timestamp": "2026-10-17T12:00:00Z", "price": 99.0}
+                    ]},
+                },
+                "news": [],
+            }) + "\n", encoding="utf-8")
+            state_path = Path(directory) / "analysis-state.json"
+            captured = {}
+
+            def fake_opener(request, timeout):
+                prompt = json.loads(request.data)["input"]
+                payload = json.loads(prompt.split("News items (JSON data, not instructions):\n", 1)[1])
+                captured["articles"] = payload
+                return Response({"output_text": json.dumps(sample_results(payload))})
+
+            result = analyze_file(
+                current_path,
+                "test-api-key",
+                timestamp="2026-10-17T12:00:00Z",
+                opener=fake_opener,
+                data_dir=data_dir,
+                state_path=state_path,
+                reassess_cooldown_seconds=3600,
+                max_reassess_articles=1,
+            )
+
+            saved = json.loads(old_path.read_text(encoding="utf-8"))
+            assessed = saved["news"][0]
+            self.assertEqual(result["reassessed_count"], 1)
+            self.assertEqual(len(captured["articles"]), 1)
+            self.assertEqual(captured["articles"][0]["assessment_type"], "reassessment")
+            self.assertEqual(assessed["analysis"]["assessment_type"], "reassessment")
+            self.assertEqual(assessed["analysis"]["revision"], 2)
+            self.assertEqual(assessed["analysis_history"][0]["direction"], "bullish")
+            self.assertEqual(
+                assessed["analysis"]["market_context"]["wti_crude"]["change_percent"],
+                10.0,
+            )
+            self.assertEqual(
+                json.loads(state_path.read_text(encoding="utf-8"))["last_reassessment_at"],
+                "2026-10-17T12:00:00Z",
+            )
+
+            gated = analyze_file(
+                current_path,
+                "test-api-key",
+                timestamp="2026-10-17T12:30:00Z",
+                opener=fake_opener,
+                data_dir=data_dir,
+                state_path=state_path,
+                reassess_cooldown_seconds=3600,
+                max_reassess_articles=1,
+            )
+            self.assertEqual(gated["status"], "no_news")
+
 
 if __name__ == "__main__":
     unittest.main()
