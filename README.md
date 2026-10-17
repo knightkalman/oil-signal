@@ -130,7 +130,9 @@ The chart plots collected provider-price observations, overlays each
 collection's bullish/bearish/neutral price-direction marker, and colors news
 markers using the latest Antigravity assessment (bullish, bearish, mixed,
 neutral, unclear, or unassessed). News markers link to corresponding
-published stories. GitHub Actions and the provider can delay five-minute
+published stories. Stories outside the selected price-history window are
+shown on a separate dated timeline so archived news does not compress the
+price chart. GitHub Actions and the provider can delay five-minute
 updates; an open dashboard re-fetches the published data every five minutes.
 This is scheduled collection, not a live quote stream.
 

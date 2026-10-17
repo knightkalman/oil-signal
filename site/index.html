@@ -449,22 +449,39 @@
       }
       const sentimentPoints = [...sentimentHistory.values()];
       const pricePoints = [...histories.values()].sort((a, b) => a.time - b.time);
+      const datedNews = articles.flatMap(article => {
+        const time = parseDate(article.published_at) || parseDate(article.first_seen_at);
+        return time ? [{ article, time }] : [];
+      });
       if (!pricePoints.length) {
         chartNote.textContent = "No price history is available yet.";
         chart.append(svgElement("text", { x: 500, y: 205, "text-anchor": "middle", class: "axis-text" }, "No price history yet"));
         return;
       }
 
-      const latestTime = Math.max(...pricePoints.map(point => point.time.getTime()));
+      const latestPriceTime = Math.max(...pricePoints.map(point => point.time.getTime()));
+      const latestNewsTime = datedNews.length
+        ? Math.max(...datedNews.map(item => item.time.getTime()))
+        : latestPriceTime;
+      const latestTime = Math.max(latestPriceTime, latestNewsTime);
       const cutoff = rangeDays === "all" ? -Infinity : latestTime - Number(rangeDays) * 86400000;
       const visiblePoints = pricePoints.filter(point => point.time.getTime() >= cutoff);
-      const times = visiblePoints.map(point => point.time.getTime());
-      let minTime = Math.min(...times);
-      let maxTime = Math.max(...times);
+      const visibleNews = datedNews.filter(item => item.time.getTime() >= cutoff);
+      if (!visiblePoints.length) {
+        chartNote.textContent = "No price observations are available in this range.";
+        chart.append(svgElement("text", { x: 500, y: 205, "text-anchor": "middle", class: "axis-text" }, "No price observations in range"));
+        return;
+      }
+      let minTime = Math.min(...visiblePoints.map(point => point.time.getTime()));
+      let maxTime = Math.max(...visiblePoints.map(point => point.time.getTime()));
       if (minTime === maxTime) {
         minTime -= 12 * 60 * 60 * 1000;
         maxTime += 12 * 60 * 60 * 1000;
       }
+      const outsideCoverageNews = visibleNews.filter(item =>
+        item.time.getTime() < minTime || item.time.getTime() > maxTime
+      );
+      chart.setAttribute("viewBox", `0 0 1000 ${outsideCoverageNews.length ? 500 : 410}`);
 
       const width = 1000;
       const left = 74;
@@ -533,77 +550,116 @@
           new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", timeZone: "UTC" }).format(tickTime)));
       }
 
-      const visibleNews = articles.flatMap(article => {
-        const time = parseDate(article.published_at) || parseDate(article.first_seen_at);
-        return time && time.getTime() >= minTime && time.getTime() <= maxTime ? [{ article, time }] : [];
-      }).sort((a, b) => a.time - b.time);
-      const clusters = [];
-      for (const item of visibleNews) {
-        const pointX = x(item.time);
-        let cluster = clusters.at(-1);
-        if (!cluster || pointX - cluster.x > 14) {
-          cluster = { x: pointX, items: [] };
-          clusters.push(cluster);
+      const clusterNews = (items, xForTime) => {
+        const clusters = [];
+        for (const item of [...items].sort((a, b) => a.time - b.time)) {
+          const pointX = xForTime(item.time);
+          let cluster = clusters.at(-1);
+          if (!cluster || pointX - cluster.x > 14) {
+            cluster = { x: pointX, items: [] };
+            clusters.push(cluster);
+          }
+          cluster.items.push(item.article);
+          cluster.x = cluster.items.reduce((sum, article) => {
+            const time = parseDate(article.published_at) || parseDate(article.first_seen_at);
+            return sum + xForTime(time);
+          }, 0) / cluster.items.length;
         }
-        cluster.items.push(item.article);
-        cluster.x = cluster.items.reduce((sum, article) => {
-          const time = parseDate(article.published_at) || parseDate(article.first_seen_at);
-          return sum + x(time);
-        }, 0) / cluster.items.length;
-      }
+        return clusters;
+      };
+      const appendNewsMarkers = (clusters, markerY, stemTop, stemBottom) => {
+        for (const cluster of clusters) {
+          const directions = [...new Set(cluster.items
+            .map(article => article.analysis?.direction)
+            .filter(direction => ["bullish", "bearish", "mixed", "neutral", "unclear"].includes(direction)))];
+          const sentiment = directions.length === 0 ? "unassessed" :
+            directions.length === 1 ? directions[0] : "mixed";
+          const sentimentLabel = directions.length === 0 ? "unassessed" :
+            directions.length === 1 ? directions[0] : "mixed";
+          chart.append(svgElement("line", {
+            x1: cluster.x, x2: cluster.x, y1: stemTop, y2: stemBottom,
+            class: `news-stem sentiment-${sentiment}`
+          }));
+          const marker = svgElement("circle", {
+            cx: cluster.x,
+            cy: markerY,
+            r: Math.min(6 + Math.log2(cluster.items.length) * 2, 12),
+            class: `news-marker sentiment-${sentiment}`,
+            tabindex: "0",
+            role: "button",
+            "aria-label": `${cluster.items.length} ${sentimentLabel} news ${cluster.items.length === 1 ? "story" : "stories"}; select to highlight in the news list`
+          });
+          marker.append(svgElement(
+            "title",
+            {},
+            `${cluster.items.length} ${sentimentLabel} news ${cluster.items.length === 1 ? "story" : "stories"} — select to highlight`
+          ));
+          const highlight = () => {
+            document.querySelectorAll(".news-card.highlight").forEach(card => card.classList.remove("highlight"));
+            const firstCard = [...document.querySelectorAll(".news-card")]
+              .find(card => card.dataset.articleId === cluster.items[0].id);
+            if (firstCard) {
+              firstCard.classList.add("highlight");
+              firstCard.scrollIntoView({ behavior: "smooth", block: "center" });
+              firstCard.focus({ preventScroll: true });
+            }
+          };
+          marker.addEventListener("click", highlight);
+          marker.addEventListener("keydown", event => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              highlight();
+            }
+          });
+          chart.append(marker);
+          if (cluster.items.length > 1) {
+            chart.append(svgElement("text", { x: cluster.x, y: markerY + 3, "text-anchor": "middle", fill: "#101a20", "font-size": 9, "font-weight": 800, "pointer-events": "none" }, String(cluster.items.length)));
+          }
+        }
+      };
+      const priceCoverageNews = visibleNews.filter(item =>
+        item.time.getTime() >= minTime && item.time.getTime() <= maxTime
+      );
+      appendNewsMarkers(clusterNews(priceCoverageNews, x), 34, 40, 70);
 
-      for (const cluster of clusters) {
-        const directions = [...new Set(cluster.items
-          .map(article => article.analysis?.direction)
-          .filter(direction => ["bullish", "bearish", "mixed", "neutral", "unclear"].includes(direction)))];
-        const sentiment = directions.length === 0 ? "unassessed" :
-          directions.length === 1 ? directions[0] : "mixed";
-        const sentimentLabel = directions.length === 0 ? "unassessed" :
-          directions.length === 1 ? directions[0] : "mixed";
+      if (outsideCoverageNews.length) {
+        const laneTop = 410;
+        const laneLeft = left;
+        const laneRight = width - right;
+        const laneTimes = outsideCoverageNews.map(item => item.time.getTime());
+        let laneMinTime = Math.min(...laneTimes);
+        let laneMaxTime = Math.max(...laneTimes);
+        if (laneMinTime === laneMaxTime) {
+          laneMinTime -= 12 * 60 * 60 * 1000;
+          laneMaxTime += 12 * 60 * 60 * 1000;
+        }
+        const laneX = time => laneLeft +
+          (time.getTime() - laneMinTime) / (laneMaxTime - laneMinTime) * (laneRight - laneLeft);
+        chart.append(svgElement("text", { x: laneLeft, y: laneTop + 15, class: "axis-text" }, "NEWS OUTSIDE PRICE COVERAGE"));
         chart.append(svgElement("line", {
-          x1: cluster.x, x2: cluster.x, y1: 40, y2: 70,
-          class: `news-stem sentiment-${sentiment}`
+          x1: laneLeft, x2: laneRight, y1: laneTop + 44, y2: laneTop + 44, class: "grid-line"
         }));
-        const marker = svgElement("circle", {
-          cx: cluster.x,
-          cy: 34,
-          r: Math.min(6 + Math.log2(cluster.items.length) * 2, 12),
-          class: `news-marker sentiment-${sentiment}`,
-          tabindex: "0",
-          role: "button",
-          "aria-label": `${cluster.items.length} ${sentimentLabel} news ${cluster.items.length === 1 ? "story" : "stories"}; select to highlight in the news list`
-        });
-        marker.append(svgElement(
-          "title",
-          {},
-          `${cluster.items.length} ${sentimentLabel} news ${cluster.items.length === 1 ? "story" : "stories"} — select to highlight`
-        ));
-        const highlight = () => {
-          document.querySelectorAll(".news-card.highlight").forEach(card => card.classList.remove("highlight"));
-          const firstCard = [...document.querySelectorAll(".news-card")]
-            .find(card => card.dataset.articleId === cluster.items[0].id);
-          if (firstCard) {
-            firstCard.classList.add("highlight");
-            firstCard.scrollIntoView({ behavior: "smooth", block: "center" });
-            firstCard.focus({ preventScroll: true });
-          }
-        };
-        marker.addEventListener("click", highlight);
-        marker.addEventListener("keydown", event => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            highlight();
-          }
-        });
-        chart.append(marker);
-        if (cluster.items.length > 1) {
-          chart.append(svgElement("text", { x: cluster.x, y: 37, "text-anchor": "middle", fill: "#101a20", "font-size": 9, "font-weight": 800, "pointer-events": "none" }, String(cluster.items.length)));
+        for (let index = 0; index < tickCount; index += 1) {
+          const tickTime = new Date(laneMinTime + (laneMaxTime - laneMinTime) * index / (tickCount - 1));
+          chart.append(svgElement("text", {
+            x: laneX(tickTime), y: laneTop + 77,
+            "text-anchor": index === 0 ? "start" : index === tickCount - 1 ? "end" : "middle",
+            class: "axis-text"
+          }, new Intl.DateTimeFormat(undefined, {
+            month: "short", day: "numeric", timeZone: "UTC"
+          }).format(tickTime)));
         }
+        appendNewsMarkers(clusterNews(outsideCoverageNews, laneX), laneTop + 34, laneTop + 20, laneTop + 30);
       }
 
-      const latestPriceTime = new Date(latestTime);
+      const latestProviderTime = new Date(latestPriceTime);
+      const historyStartTime = pricePoints[0].time;
+      const historyEndTime = pricePoints.at(-1).time;
       const visibleHours = rangeDays === "all" ? "all available history" : `last ${rangeDays} day${rangeDays === 1 ? "" : "s"}`;
-      chartNote.textContent = `${visiblePoints.length} collected price observations shown for the ${visibleHours}. Latest provider quote: ${formatDate(latestPriceTime)}. News markers are colored by the latest Antigravity assessment; price triangles show direction versus the previous daily close.`;
+      const newsCoverageNote = outsideCoverageNews.length
+        ? ` ${outsideCoverageNews.length} news stories outside the price-history window are shown in a separate timeline.`
+        : "";
+      chartNote.textContent = `${visiblePoints.length} collected price observations shown for the ${visibleHours}. Price history spans ${formatDate(historyStartTime)} to ${formatDate(historyEndTime)}.${newsCoverageNote} Latest provider quote: ${formatDate(latestProviderTime)}. News markers are colored by the latest Antigravity assessment; price triangles show direction versus the previous daily close.`;
     }
 
     function safeLink(value) {
