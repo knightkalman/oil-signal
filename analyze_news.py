@@ -181,9 +181,26 @@ def call_agent(
         response_payload = json.loads(response.read())
     if not isinstance(response_payload, dict):
         raise ValueError("managed agent response must be a JSON object")
-    output_text = response_payload.get("output_text")
+    interaction = response_payload.get("interaction", response_payload)
+    if not isinstance(interaction, dict):
+        raise ValueError("managed agent response interaction must be a JSON object")
+    output_text = interaction.get("output_text")
     if not isinstance(output_text, str):
-        raise ValueError("managed agent response did not include output_text")
+        output_items = interaction.get("output") or interaction.get("outputs") or []
+        if isinstance(output_items, list):
+            text_parts = [
+                item["text"]
+                for item in output_items
+                if isinstance(item, dict)
+                and item.get("type") == "text"
+                and isinstance(item.get("text"), str)
+            ]
+            output_text = "\n".join(text_parts) if text_parts else None
+    if not isinstance(output_text, str):
+        raise ValueError(
+            "managed agent response did not contain text output "
+            f"(interaction fields: {', '.join(sorted(interaction))})"
+        )
     return validate_results(json.loads(output_text), articles)
 
 

@@ -82,7 +82,14 @@ class NewsAnalysisTests(unittest.TestCase):
             captured["body"] = json.loads(request.data)
             captured["headers"] = request.headers
             captured["timeout"] = timeout
-            return Response({"output_text": json.dumps(sample_results(articles))})
+            return Response({
+                "interaction": {
+                    "output": [{
+                        "type": "text",
+                        "text": json.dumps(sample_results(articles)),
+                    }]
+                }
+            })
 
         results = call_agent(articles, "test-api-key", opener=fake_opener)
         self.assertEqual(len(results), 2)
