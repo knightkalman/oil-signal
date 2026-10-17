@@ -190,12 +190,12 @@ def call_agent(
         steps = interaction.get("steps")
         model_outputs = [
             step for step in steps
-            if isinstance(step, dict) and step.get("type") == "model_output"
+            if isinstance(step, dict)
+            and step.get("type") == "model_output"
+            and step.get("status") in (None, "completed")
         ] if isinstance(steps, list) else []
-        output_items = (
-            [model_outputs[-1]]
-            if model_outputs
-            else interaction.get("output") or interaction.get("outputs") or steps or []
+        output_items = model_outputs or (
+            interaction.get("output") or interaction.get("outputs") or steps or []
         )
         text_parts = []
 
@@ -204,32 +204,39 @@ def call_agent(
                 for item in value:
                     collect_text(item)
             elif isinstance(value, dict):
-                if value.get("type") == "text" and isinstance(value.get("text"), str):
+                if isinstance(value.get("text"), str):
                     text_parts.append(value["text"])
-                elif value.get("type") == "model_output":
-                    content = value.get("content")
-                    if isinstance(content, str):
-                        text_parts.append(content)
-                    else:
-                        collect_text(content)
+                if isinstance(value.get("output_text"), str):
+                    text_parts.append(value["output_text"])
+                if isinstance(value.get("content"), str):
+                    text_parts.append(value["content"])
                 else:
                     collect_text(value.get("content"))
+                collect_text(value.get("parts"))
 
         collect_text(output_items)
-        output_text = "\n".join(text_parts) if text_parts else None
+        nonempty_text = [part for part in text_parts if part.strip()]
+        output_text = "\n".join(nonempty_text) if nonempty_text else None
     if not isinstance(output_text, str):
         raise ValueError(
             "managed agent response did not contain text output "
             f"(interaction fields: {', '.join(sorted(interaction))})"
         )
-    try:
-        output_payload = json.loads(output_text)
-    except json.JSONDecodeError as error:
+    output_payload = None
+    decoder = json.JSONDecoder()
+    for index, character in enumerate(output_text):
+        if character != "{":
+            continue
+        try:
+            candidate, _ = decoder.raw_decode(output_text[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict) and isinstance(candidate.get("articles"), list):
+            output_payload = candidate
+            break
+    if output_payload is None:
         excerpt = output_text[:160].replace("\n", " ")
-        raise ValueError(
-            f"managed agent output was not valid JSON at character {error.pos}: "
-            f"{excerpt!r}"
-        ) from error
+        raise ValueError(f"managed agent output did not contain valid article JSON: {excerpt!r}")
     return validate_results(output_payload, articles)
 
 
