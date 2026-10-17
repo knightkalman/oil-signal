@@ -22,6 +22,7 @@ MAX_ANALYSIS_HISTORY = 5
 REASSESSMENT_INTERVAL_SECONDS = 3600
 REASSESSMENT_COOLDOWN_SECONDS = 86400
 MAX_REASSESS_ARTICLES = 20
+AGENT_REQUEST_TIMEOUT_SECONDS = 300
 
 ANALYSIS_SCHEMA = {
     "type": "object",
@@ -178,7 +179,7 @@ def call_agent(
         },
         method="POST",
     )
-    with opener(request, timeout=120) as response:
+    with opener(request, timeout=AGENT_REQUEST_TIMEOUT_SECONDS) as response:
         response_payload = json.loads(response.read())
     if not isinstance(response_payload, dict):
         raise ValueError("managed agent response must be a JSON object")

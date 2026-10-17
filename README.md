@@ -42,7 +42,7 @@ sentiment is `unknown` if the provider has not supplied a previous close.
 
 Each scheduled run passes newly collected headlines and feed summaries to
 Google's managed **Antigravity agent** through the Gemini Interactions API.
-At most once an hour, it also reassesses up to 20 older stories whose
+At most once an hour, it also reassesses up to 5 older stories whose
 assessments are at least 24 hours old, retaining the previous assessments.
 For these reassessments, it provides observed WTI/Brent price moves since
 publication as context; the agent is instructed not to treat those moves as
@@ -53,7 +53,8 @@ plugin runs in the editor and is not available to GitHub Actions. The
 integration uses the managed agent ID `antigravity-preview-09-2026` and asks
 for schema-constrained JSON describing likely oil-price impact, a short
 summary, a textual evidence-validity label, a rationale, and uncalibrated
-confidence. Tools are disabled for this classification request. The agent
+confidence. Tools are disabled for this classification request. Agent requests
+can run for up to five minutes. The agent
 receives the public feed text; it is treated as untrusted input and is not
 independently fact-checked. The managed agent requires interaction storage;
 Google may retain the submitted public headlines, market context, and results

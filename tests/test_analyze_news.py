@@ -110,6 +110,7 @@ class NewsAnalysisTests(unittest.TestCase):
         self.assertEqual(captured["body"]["environment"], "remote")
         self.assertEqual(captured["body"]["tools"], [])
         self.assertTrue(captured["body"]["store"])
+        self.assertEqual(captured["timeout"], 300)
         self.assertEqual(captured["headers"]["X-goog-api-key"], "test-api-key")
 
     def test_missing_key_is_explicit_and_preserves_collection(self):

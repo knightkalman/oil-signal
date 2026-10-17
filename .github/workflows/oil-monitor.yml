@@ -52,7 +52,7 @@ jobs:
             --state-file data/oil_analysis_state.json \
             --reassess-interval 3600 \
             --reassess-cooldown 86400 \
-            --max-reassess-articles 20
+            --max-reassess-articles 5
 
       - name: Save collected data
         run: |
