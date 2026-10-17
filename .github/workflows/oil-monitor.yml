@@ -34,6 +34,8 @@ jobs:
           python-version: "3.x"
 
       - name: Collect oil prices and news
+        env:
+          MASSIVE_API_KEY: ${{ secrets.MASSIVE_API_KEY }}
         run: |
           output_path="data/oil/$(date -u +%F).jsonl"
           python oil_monitor.py \

@@ -9,11 +9,12 @@ from email.utils import parsedate_to_datetime
 from html import unescape
 import json
 import logging
+import os
 from pathlib import Path
 import re
 import sqlite3
 import time
-from urllib.parse import quote, urljoin
+from urllib.parse import quote, urlencode, urljoin
 from urllib.request import Request, urlopen
 import xml.etree.ElementTree as ET
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -25,6 +26,10 @@ HTTP_TIMEOUT_SECONDS = 20
 PRICE_SYMBOLS = {
     "wti_crude": "CL=F",
     "brent_crude": "BZ=F",
+}
+MASSIVE_PRODUCT_CODES = {
+    "wti_crude": "CL",
+    "brent_crude": "BZ",
 }
 NEWS_FEEDS = {
     "oilprice": {
@@ -69,8 +74,11 @@ def utc_now() -> str:
     )
 
 
-def request_bytes(url: str) -> bytes:
-    request = Request(url, headers={"User-Agent": USER_AGENT})
+def request_bytes(url: str, headers: dict[str, str] | None = None) -> bytes:
+    request_headers = {"User-Agent": USER_AGENT}
+    if headers:
+        request_headers.update(headers)
+    request = Request(url, headers=request_headers)
     with urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
         return response.read()
 
@@ -87,7 +95,7 @@ def sentiment_for_change(
     return round(change, 6), round(change_percent, 4), sentiment
 
 
-def fetch_price(name: str, symbol: str) -> dict[str, object]:
+def fetch_yahoo_price(name: str, symbol: str) -> dict[str, object]:
     url = (
         "https://query1.finance.yahoo.com/v8/finance/chart/"
         f"{quote(symbol, safe='')}?range={PRICE_HISTORY_RANGE}"
@@ -193,6 +201,213 @@ def fetch_price(name: str, symbol: str) -> dict[str, object]:
         "source": "Yahoo Finance chart API",
         "source_url": url,
     }
+
+
+def fetch_massive_price(
+    name: str, product_code: str, api_key: str
+) -> dict[str, object]:
+    headers = {"Authorization": f"Bearer {api_key}"}
+    contract_url = "https://api.massive.com/futures/v1/contracts"
+    contract_query = urlencode({
+        "product_code": product_code,
+        "date": datetime.now(timezone.utc).date().isoformat(),
+        "active": "true",
+        "limit": 1000,
+    })
+    contracts_url = f"{contract_url}?{contract_query}"
+    contract_payload = json.loads(request_bytes(contracts_url, headers=headers))
+    contracts = contract_payload.get("results") or []
+    eligible_contracts = [
+        contract for contract in contracts
+        if isinstance(contract, dict)
+        and contract.get("active") is True
+        and contract.get("product_code") == product_code
+        and contract.get("type") in (None, "single")
+        and isinstance(contract.get("ticker"), str)
+        and isinstance(contract.get("days_to_maturity"), (int, float))
+        and contract.get("days_to_maturity") >= 0
+    ]
+    if not eligible_contracts:
+        raise ValueError(f"Massive returned no active {product_code} futures contracts")
+    contract = min(eligible_contracts, key=lambda item: item["days_to_maturity"])
+    ticker = contract["ticker"]
+
+    aggregates_url = (
+        f"https://api.massive.com/futures/v1/aggs/{quote(ticker, safe='')}"
+        "?resolution=1min&limit=1&sort=window_start.desc"
+    )
+    aggregate_payload = json.loads(request_bytes(aggregates_url, headers=headers))
+    aggregates = aggregate_payload.get("results") or []
+    valid_aggregates = [
+        aggregate for aggregate in aggregates
+        if isinstance(aggregate, dict)
+        and isinstance(aggregate.get("close"), (int, float))
+        and isinstance(aggregate.get("window_start"), (int, float))
+    ]
+    if not valid_aggregates:
+        raise ValueError(f"Massive returned no one-minute bars for {ticker}")
+    latest = max(valid_aggregates, key=lambda item: item["window_start"])
+    timestamp = datetime.fromtimestamp(
+        latest["window_start"] / 1_000_000_000, timezone.utc
+    ).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return {
+        "name": name,
+        "symbol": ticker,
+        "price": float(latest["close"]),
+        "currency": "USD",
+        "unit": "barrel",
+        "price_timestamp": timestamp,
+        "history": [{"timestamp": timestamp, "price": float(latest["close"])}],
+        "previous_close": None,
+        "change": None,
+        "change_percent": None,
+        "change_basis": "previous_daily_close",
+        "price_change_sentiment": "unknown",
+        "source": "Massive Futures API",
+        "source_url": aggregates_url,
+    }
+
+
+def _minute_timestamp(value: str) -> datetime:
+    timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    timestamp = timestamp.astimezone(timezone.utc)
+    return timestamp.replace(second=0, microsecond=0)
+
+
+def _quote_datetime(quote: dict[str, object]) -> datetime | None:
+    timestamp = quote.get("price_timestamp")
+    if not isinstance(timestamp, str):
+        return None
+    try:
+        return datetime.fromisoformat(timestamp.replace("Z", "+00:00")).astimezone(
+            timezone.utc
+        )
+    except ValueError:
+        return None
+
+
+def combine_price_quotes(
+    name: str,
+    symbol: str,
+    yahoo_quote: dict[str, object] | None,
+    massive_quote: dict[str, object] | None,
+    provider_errors: list[str] | None = None,
+) -> dict[str, object]:
+    """Average providers only when their latest prices belong to the same minute."""
+    quotes = [quote for quote in (yahoo_quote, massive_quote) if quote is not None]
+    if not quotes:
+        raise ValueError(f"No price providers returned a quote for {name}")
+
+    selected_quotes = quotes
+    if len(quotes) == 2:
+        quote_times = [_quote_datetime(quote) for quote in quotes]
+        if all(quote_times):
+            if _minute_timestamp(quote_times[0].isoformat()) != _minute_timestamp(
+                quote_times[1].isoformat()
+            ):
+                selected_quotes = [max(
+                    zip(quotes, quote_times), key=lambda pair: pair[1]
+                )[0]]
+        else:
+            timestamped_quotes = [
+                (quote, timestamp)
+                for quote, timestamp in zip(quotes, quote_times)
+                if timestamp is not None
+            ]
+            if timestamped_quotes:
+                selected_quotes = [max(timestamped_quotes, key=lambda pair: pair[1])[0]]
+            else:
+                selected_quotes = [quotes[0]]
+
+    price = sum(float(quote["price"]) for quote in selected_quotes) / len(selected_quotes)
+    selected_timestamps = [
+        quote.get("price_timestamp") for quote in selected_quotes
+        if isinstance(quote.get("price_timestamp"), str)
+    ]
+    if len(selected_quotes) == 2 and selected_timestamps:
+        price_timestamp = _minute_timestamp(selected_timestamps[0]).isoformat(
+            timespec="seconds"
+        ).replace("+00:00", "Z")
+    elif selected_timestamps:
+        price_timestamp = selected_timestamps[0]
+    else:
+        price_timestamp = None
+
+    selected_sources = [
+        {
+            "source": quote["source"],
+            "price": float(quote["price"]),
+            "timestamp": quote.get("price_timestamp"),
+        }
+        for quote in selected_quotes
+    ]
+    source_names = list(dict.fromkeys(str(quote["source"]) for quote in selected_quotes))
+    source_urls = list(dict.fromkeys(
+        str(quote["source_url"]) for quote in selected_quotes
+        if quote.get("source_url")
+    ))
+    previous_close = (
+        float(yahoo_quote["previous_close"])
+        if yahoo_quote in selected_quotes
+        and yahoo_quote.get("previous_close") is not None
+        else None
+    )
+    change, change_percent, sentiment = sentiment_for_change(price, previous_close)
+    result: dict[str, object] = {
+        "name": name,
+        "symbol": symbol,
+        "price": price,
+        "currency": "USD",
+        "unit": "barrel",
+        "price_timestamp": price_timestamp,
+        "history": (
+            [{"timestamp": price_timestamp, "price": price}]
+            if price_timestamp else []
+        ),
+        "previous_close": previous_close,
+        "change": change,
+        "change_percent": change_percent,
+        "change_basis": "previous_daily_close",
+        "price_change_sentiment": sentiment,
+        "source": " + ".join(source_names),
+        "source_url": source_urls[0] if source_urls else "",
+        "source_urls": source_urls,
+        "provider_observations": selected_sources,
+    }
+    if provider_errors:
+        result["provider_errors"] = provider_errors
+    return result
+
+
+def fetch_price(name: str, symbol: str) -> dict[str, object]:
+    """Fetch Yahoo and optional Massive prices, using Yahoo when Massive is unavailable."""
+    yahoo_quote = None
+    massive_quote = None
+    provider_errors = []
+    try:
+        yahoo_quote = fetch_yahoo_price(name, symbol)
+    except Exception as error:
+        provider_errors.append(f"Yahoo Finance: {type(error).__name__}: {error}")
+
+    api_key = os.environ.get("MASSIVE_API_KEY", "").strip()
+    if api_key:
+        try:
+            massive_quote = fetch_massive_price(
+                name, MASSIVE_PRODUCT_CODES[name], api_key
+            )
+        except Exception as error:
+            provider_errors.append(f"Massive: {type(error).__name__}: {error}")
+    else:
+        LOGGER.info("MASSIVE_API_KEY is not set; using Yahoo Finance for %s", name)
+
+    if provider_errors:
+        for error in provider_errors:
+            LOGGER.warning("Price provider fallback for %s: %s", name, error)
+    if yahoo_quote is None and massive_quote is None:
+        raise RuntimeError("; ".join(provider_errors) or f"No price quote for {name}")
+    return combine_price_quotes(
+        name, symbol, yahoo_quote, massive_quote, provider_errors or None
+    )
 
 
 def clean_text(value: str | None) -> str:

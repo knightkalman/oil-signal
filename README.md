@@ -78,12 +78,27 @@ the model's interpretation, not whether its claims are true. The dashboard
 shows direction, evidence quality, summary, and uncalibrated model confidence.
 
 Price data comes from Yahoo Finance's public chart endpoint for `CL=F` (WTI)
-and `BZ=F` (Brent), using one-minute provider data and retaining each
-collection's latest observation to limit duplicate storage. News
+and `BZ=F` (Brent), combined with Massive's one-minute futures bars for the
+active `CL` and `BZ` contracts when `MASSIVE_API_KEY` is configured. When both
+providers have a quote from the same minute, the monitor records their average;
+otherwise it uses the newer quote. If one provider fails, it uses the other
+and records the provider error in the price entry. Source timestamps and
+provider observations are retained for inspection. The collector samples
+prices every five minutes by default. News
 comes from OilPrice.com, EIA Today in Energy, EIA press releases, BBC Business,
 and CNBC Business. Broad business feeds are filtered for oil, fuel, gas, and
 energy topics. Individual source failures are logged and included in that
 cycle's `errors`; other sources continue to be collected.
+
+For the GitHub Actions collector, configure the repository secret
+`MASSIVE_API_KEY`; the workflow passes it to the collector as an environment
+variable and never sends it to the dashboard. For local runs, put
+`MASSIVE_API_KEY` in the ignored `.env.local` file and load it before running
+the collector with `set -a; . ./.env.local; set +a`. Massive plan access
+controls data recency (some tiers provide delayed or historical data rather
+than real-time quotes), and public display/redistribution may require market-data
+rights; verify the account's entitlement and terms before relying on those
+prices on the public dashboard.
 
 For a long-running deployment, run this process under your operating system's
 service manager or a container supervisor configured to restart it if it exits.
@@ -117,12 +132,14 @@ not continuously running, and scheduled starts may be delayed. Git-backed
 history grows over time; keep an eye on repository size. In a public repository,
 collected news and prices are public along with the source code.
 
-The dashboard is at `https://<owner>.github.io/<repository>/` for a project
-repository. Enable GitHub Pages in the repository's **Settings** > **Pages**
-with **GitHub Actions** as the deployment source. Free GitHub Pages hosting
-requires a public repository; publishing also makes collected prices and news
-public. The dashboard charts WTI and Brent prices, marks published news on the
-timeline, and labels sentiment validity as valid, stale, or insufficient data.
+The dashboard is deployed at
+[`https://knightkalman.github.io/oil-signal/`](https://knightkalman.github.io/oil-signal/).
+The repository's **Settings** > **Pages** deployment source is **GitHub
+Actions**; the `Oil monitor` workflow publishes the `site/` directory after
+each collection. Free GitHub Pages hosting requires a public repository;
+publishing also makes collected prices and news public. The dashboard charts
+WTI and Brent prices, marks published news on the timeline, and labels
+sentiment validity as valid, stale, or insufficient data.
 Validity requires positive current and previous-close prices and a provider
 quote timestamp no more than 48 hours old. Sentiment is a descriptive
 comparison to the previous daily close, not a forecast or investment advice.
