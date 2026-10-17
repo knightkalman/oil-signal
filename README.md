@@ -55,7 +55,9 @@ for schema-constrained JSON describing likely oil-price impact, a short
 summary, a textual evidence-validity label, a rationale, and uncalibrated
 confidence. Tools are disabled for this classification request. The agent
 receives the public feed text; it is treated as untrusted input and is not
-independently fact-checked. The request opts out of interaction storage.
+independently fact-checked. The managed agent requires interaction storage;
+Google may retain the submitted public headlines, market context, and results
+under its API terms. Do not include private data in this request.
 
 To enable it, create a Gemini API key in [Google AI Studio](https://aistudio.google.com/app/apikey),
 then add it to this public repository under **Settings** > **Secrets and

@@ -161,7 +161,7 @@ def call_agent(
         "environment": "remote",
         "input": make_prompt(articles),
         "tools": [],
-        "store": False,
+        "store": True,
         "response_format": {
             "type": "text",
             "mime_type": "application/json",

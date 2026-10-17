@@ -74,7 +74,7 @@ class NewsAnalysisTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "confidence"):
             validate_results(invalid, articles)
 
-    def test_agent_request_disables_tools_and_persists_nothing(self):
+    def test_agent_request_disables_tools_and_uses_required_interaction_storage(self):
         articles = sample_articles()
         captured = {}
 
@@ -89,7 +89,7 @@ class NewsAnalysisTests(unittest.TestCase):
         self.assertEqual(captured["body"]["agent"], AGENT)
         self.assertEqual(captured["body"]["environment"], "remote")
         self.assertEqual(captured["body"]["tools"], [])
-        self.assertFalse(captured["body"]["store"])
+        self.assertTrue(captured["body"]["store"])
         self.assertEqual(captured["headers"]["X-goog-api-key"], "test-api-key")
 
     def test_missing_key_is_explicit_and_preserves_collection(self):
