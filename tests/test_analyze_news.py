@@ -84,13 +84,19 @@ class NewsAnalysisTests(unittest.TestCase):
             captured["timeout"] = timeout
             return Response({
                 "interaction": {
-                    "steps": [{
-                        "type": "model_output",
-                        "content": [{
-                            "type": "text",
-                            "text": json.dumps(sample_results(articles)),
-                        }],
-                    }]
+                    "steps": [
+                        {
+                            "type": "model_output",
+                            "content": [{"type": "text", "text": "Working through the request."}],
+                        },
+                        {
+                            "type": "model_output",
+                            "content": [{
+                                "type": "text",
+                                "text": json.dumps(sample_results(articles)),
+                            }],
+                        },
+                    ]
                 }
             })
 
