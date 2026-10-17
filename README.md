@@ -69,10 +69,11 @@ the model's interpretation, not whether its claims are true. The dashboard
 shows direction, evidence quality, summary, and uncalibrated model confidence.
 
 Price data comes from Yahoo Finance's public chart endpoint for `CL=F` (WTI)
-and `BZ=F` (Brent). News comes from OilPrice.com and the U.S. Energy
-Information Administration's Today in Energy RSS feed. Individual source
-failures are logged and included in that cycle's `errors`; other sources
-continue to be collected.
+and `BZ=F` (Brent), including five days of hourly history for charting. News
+comes from OilPrice.com, EIA Today in Energy, EIA press releases, BBC Business,
+and CNBC Business. Broad business feeds are filtered for oil, fuel, gas, and
+energy topics. Individual source failures are logged and included in that
+cycle's `errors`; other sources continue to be collected.
 
 For a long-running deployment, run this process under your operating system's
 service manager or a container supervisor configured to restart it if it exits.
@@ -89,7 +90,7 @@ every 15 minutes and automatically restarts if it exits unexpectedly.
 
 ### Run on GitHub Actions without a paid server
 
-The included `.github/workflows/oil-monitor.yml` runs one collection every six
+The included `.github/workflows/oil-monitor.yml` runs one collection every two
 hours and also supports manual runs from the repository's **Actions** tab.
 Each run appends to that day's JSONL file under `data/oil/`, saves the SQLite
 news-deduplication database, and commits both to the repository. This retains
@@ -114,6 +115,9 @@ timeline, and labels sentiment validity as valid, stale, or insufficient data.
 Validity requires positive current and previous-close prices and a provider
 quote timestamp no more than 48 hours old. Sentiment is a descriptive
 comparison to the previous daily close, not a forecast or investment advice.
+The chart plots hourly provider prices (five-day lookback), overlays each
+collection's bullish/bearish/neutral direction marker, and defaults to a
+24-hour view. Markers link to corresponding published stories.
 
 ### Run as a user service on Linux with systemd
 

@@ -127,6 +127,10 @@
     .series-brent { stroke: var(--blue); }
     .point-wti { fill: var(--green); }
     .point-brent { fill: var(--blue); }
+    .sentiment-marker { stroke: #101a20; stroke-width: 2; cursor: help; }
+    .sentiment-marker.bullish { fill: var(--green); }
+    .sentiment-marker.bearish { fill: var(--red); }
+    .sentiment-marker.neutral { fill: var(--yellow); }
     .news-stem { stroke: var(--orange); stroke-width: 1.4; opacity: 0.65; }
     .news-marker { fill: var(--orange); stroke: #17242b; stroke-width: 2; cursor: pointer; }
     .news-marker:hover, .news-marker:focus { stroke: white; stroke-width: 3; outline: none; }
@@ -214,8 +218,8 @@
             <h2 id="chart-title">Price history with published headlines</h2>
           </div>
           <div class="chart-toolbar" role="group" aria-label="Chart time range">
-            <button class="range-button" type="button" data-range="1" aria-pressed="false">24h</button>
-            <button class="range-button" type="button" data-range="7" aria-pressed="true">7d</button>
+            <button class="range-button" type="button" data-range="1" aria-pressed="true">24h</button>
+            <button class="range-button" type="button" data-range="7" aria-pressed="false">7d</button>
             <button class="range-button" type="button" data-range="30" aria-pressed="false">30d</button>
             <button class="range-button" type="button" data-range="all" aria-pressed="false">All</button>
           </div>
@@ -228,6 +232,9 @@
             <span class="legend-item"><span class="legend-line"></span> WTI crude</span>
             <span class="legend-item"><span class="legend-line brent"></span> Brent crude</span>
             <span class="legend-item"><span class="legend-dot"></span> Published news (select a marker to highlight)</span>
+            <span class="legend-item"><span class="positive">▲</span> Bullish</span>
+            <span class="legend-item"><span class="negative">▼</span> Bearish</span>
+            <span class="legend-item"><span class="neutral">◆</span> Neutral</span>
           </div>
           <p class="chart-note" id="chart-note">Loading price history…</p>
         </div>
@@ -244,7 +251,7 @@
         <div class="news-list" id="news-list" aria-live="polite"></div>
       </section>
 
-      <p class="footnote">Price source: Yahoo Finance chart data. Headlines: OilPrice.com and the U.S. Energy Information Administration. The managed Antigravity agent estimates each headline's potential oil-price direction from the supplied text only; it does not independently verify claims. Confidence is not calibrated and this is not investment advice. Data refreshes on the collection schedule; this page does not stream live quotes.</p>
+      <p class="footnote">Price source: Yahoo Finance hourly chart data. Headlines: OilPrice.com, the U.S. Energy Information Administration, BBC Business, and CNBC Business. The managed Antigravity agent estimates each headline's potential oil-price direction from the supplied text only; it does not independently verify claims. Confidence is not calibrated and this is not investment advice. Data refreshes every two hours; this page does not stream live quotes.</p>
     </main>
   </div>
 
@@ -263,7 +270,7 @@
     });
     let records = [];
     let articles = [];
-    let rangeDays = 7;
+    let rangeDays = 1;
 
     function parseDate(value) {
       if (!value) return null;
@@ -403,14 +410,38 @@
 
     function drawChart() {
       chart.replaceChildren();
-      const pricePoints = records.flatMap(record => {
-        const time = parseDate(record.collected_at);
-        if (!time) return [];
-        return ["wti_crude", "brent_crude"].flatMap(key => {
-          const value = Number(record.prices?.[key]?.price);
-          return Number.isFinite(value) && value > 0 ? [{ key, time, value }] : [];
-        });
-      });
+      const histories = new Map();
+      const sentimentHistory = new Map();
+      for (const record of records) {
+        for (const key of ["wti_crude", "brent_crude"]) {
+          const quote = record.prices?.[key];
+          if (!quote) continue;
+          const history = Array.isArray(quote.history) && quote.history.length
+            ? quote.history
+            : [{ timestamp: quote.price_timestamp || record.collected_at, price: quote.price }];
+          for (const point of history) {
+            const time = parseDate(point.timestamp);
+            const value = Number(point.price);
+            if (!time || !Number.isFinite(value) || value <= 0) continue;
+            const id = `${key}:${time.getTime()}`;
+            histories.set(id, { key, time, value });
+          }
+          const sentimentTime = parseDate(quote.price_timestamp || record.collected_at);
+          const price = Number(quote.price);
+          if (sentimentTime && Number.isFinite(price) && price > 0) {
+            const point = {
+              key,
+              time: sentimentTime,
+              value: price,
+              direction: quote.price_change_sentiment || "unknown",
+              validity: priceAssessment(quote).status
+            };
+            sentimentHistory.set(`${key}:${sentimentTime.getTime()}`, point);
+          }
+        }
+      }
+      const sentimentPoints = [...sentimentHistory.values()];
+      const pricePoints = [...histories.values()].sort((a, b) => a.time - b.time);
       if (!pricePoints.length) {
         chartNote.textContent = "No price history is available yet.";
         chart.append(svgElement("text", { x: 500, y: 205, "text-anchor": "middle", class: "axis-text" }, "No price history yet"));
@@ -429,7 +460,6 @@
       }
 
       const width = 1000;
-      const height = 410;
       const left = 74;
       const right = 24;
       const top = 86;
@@ -452,16 +482,8 @@
         chart.append(svgElement("text", { x: left - 10, y: lineY + 4, "text-anchor": "end", class: "axis-text" }, `$${value.toFixed(0)}`));
       }
 
-      const visibleRecords = records.filter(record => {
-        const time = parseDate(record.collected_at);
-        return time && time.getTime() >= cutoff;
-      });
       for (const key of ["wti_crude", "brent_crude"]) {
-        const series = visibleRecords.flatMap(record => {
-          const time = parseDate(record.collected_at);
-          const value = Number(record.prices?.[key]?.price);
-          return time && Number.isFinite(value) && value > 0 ? [{ time, value }] : [];
-        });
+        const series = visiblePoints.filter(point => point.key === key);
         if (!series.length) continue;
         const className = key === "wti_crude" ? "wti" : "brent";
         const path = series.map((point, index) =>
@@ -471,6 +493,29 @@
         if (series.length === 1) {
           chart.append(svgElement("circle", { cx: x(series[0].time), cy: y(series[0].value), r: 4, class: `point-${className}` }));
         }
+      }
+
+      for (const point of sentimentPoints) {
+        if (point.time.getTime() < minTime || point.time.getTime() > maxTime) continue;
+        if (!["bullish", "bearish", "neutral"].includes(point.direction)) continue;
+        const pointX = x(point.time);
+        const pointY = y(point.value);
+        const markerPath = point.direction === "bullish"
+          ? `M ${pointX} ${pointY - 7} L ${pointX - 6} ${pointY + 4} L ${pointX + 6} ${pointY + 4} Z`
+          : point.direction === "bearish"
+            ? `M ${pointX - 6} ${pointY - 4} L ${pointX + 6} ${pointY - 4} L ${pointX} ${pointY + 7} Z`
+            : `M ${pointX} ${pointY - 6} L ${pointX + 6} ${pointY} L ${pointX} ${pointY + 6} L ${pointX - 6} ${pointY} Z`;
+        const sentimentMarker = svgElement("path", {
+          d: markerPath,
+          class: `sentiment-marker ${point.direction}`,
+          "pointer-events": "all"
+        });
+        sentimentMarker.append(svgElement(
+          "title",
+          {},
+          `${point.key === "wti_crude" ? "WTI" : "Brent"} ${point.direction} sentiment at ${formatDate(point.time)}; quote validity: ${point.validity}`
+        ));
+        chart.append(sentimentMarker);
       }
 
       const tickCount = 5;
@@ -535,7 +580,9 @@
         }
       }
 
-      chartNote.textContent = `${visibleRecords.length} collection${visibleRecords.length === 1 ? "" : "s"} shown. News markers align to publication time; stories outside the selected price window remain listed below.`;
+      const latestPriceTime = new Date(latestTime);
+      const visibleHours = rangeDays === "all" ? "all available history" : `last ${rangeDays} day${rangeDays === 1 ? "" : "s"}`;
+      chartNote.textContent = `${visiblePoints.length} hourly price points shown for the ${visibleHours}. Latest provider quote: ${formatDate(latestPriceTime)}. Sentiment markers show each collected quote's direction versus its previous daily close; hover for quote validity.`;
     }
 
     function safeLink(value) {

@@ -13,9 +13,10 @@ from pathlib import Path
 import re
 import sqlite3
 import time
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
 from urllib.request import Request, urlopen
 import xml.etree.ElementTree as ET
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 LOGGER = logging.getLogger("oil_monitor")
@@ -26,9 +27,40 @@ PRICE_SYMBOLS = {
     "brent_crude": "BZ=F",
 }
 NEWS_FEEDS = {
-    "oilprice": "https://oilprice.com/rss/main",
-    "eia_today_in_energy": "https://www.eia.gov/rss/todayinenergy.xml",
+    "oilprice": {
+        "url": "https://oilprice.com/rss/main",
+        "keywords": (),
+    },
+    "eia_today_in_energy": {
+        "url": "https://www.eia.gov/rss/todayinenergy.xml",
+        "keywords": (),
+    },
+    "eia_press_releases": {
+        "url": "https://www.eia.gov/rss/press_rss.xml",
+        "keywords": (
+            "oil", "crude", "petroleum", "opec", "barrel", "refinery",
+            "gasoline", "diesel", "fuel", "lng", "natural gas", "pipeline",
+        ),
+    },
+    "bbc_business": {
+        "url": "https://feeds.bbci.co.uk/news/business/rss.xml",
+        "keywords": (
+            "oil", "crude", "petroleum", "opec", "barrel", "refinery",
+            "gasoline", "diesel", "fuel", "lng", "natural gas", "pipeline",
+            "drilling", "shale", "energy",
+        ),
+    },
+    "cnbc_business": {
+        "url": "https://www.cnbc.com/id/10001147/device/rss/rss.html",
+        "keywords": (
+            "oil", "crude", "petroleum", "opec", "barrel", "refinery",
+            "gasoline", "diesel", "fuel", "lng", "natural gas", "pipeline",
+            "drilling", "shale", "energy",
+        ),
+    },
 }
+PRICE_HISTORY_RANGE = "5d"
+PRICE_HISTORY_INTERVAL = "60m"
 
 
 def utc_now() -> str:
@@ -58,7 +90,8 @@ def sentiment_for_change(
 def fetch_price(name: str, symbol: str) -> dict[str, object]:
     url = (
         "https://query1.finance.yahoo.com/v8/finance/chart/"
-        f"{quote(symbol, safe='')}?range=5d&interval=1d"
+        f"{quote(symbol, safe='')}?range={PRICE_HISTORY_RANGE}"
+        f"&interval={PRICE_HISTORY_INTERVAL}"
     )
     payload = json.loads(request_bytes(url))
     chart = payload.get("chart", {})
@@ -71,23 +104,71 @@ def fetch_price(name: str, symbol: str) -> dict[str, object]:
     result = results[0]
     metadata = result.get("meta", {})
     quote_data = (result.get("indicators", {}).get("quote") or [{}])[0]
-    closes = [value for value in quote_data.get("close", []) if value is not None]
+    timestamps = result.get("timestamp") or []
+    timestamp = metadata.get("regularMarketTime")
+    if timestamp is None and timestamps:
+        timestamp = timestamps[-1]
+    closes = quote_data.get("close", [])
+    history = [
+        {
+            "timestamp": datetime.fromtimestamp(timestamp, timezone.utc)
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z"),
+            "price": float(close),
+        }
+        for timestamp, close in zip(timestamps, closes)
+        if timestamp is not None and close is not None
+    ]
     current_price = metadata.get("regularMarketPrice")
-    if current_price is None and closes:
-        current_price = closes[-1]
+    if current_price is None and history:
+        current_price = history[-1]["price"]
     if current_price is None:
         raise ValueError("price provider returned no current price")
 
-    previous_close = closes[-2] if len(closes) >= 2 else None
+    previous_close = metadata.get("chartPreviousClose")
+    if previous_close is None and history:
+        exchange_timezone = metadata.get("exchangeTimezoneName")
+        try:
+            market_timezone = ZoneInfo(exchange_timezone) if exchange_timezone else timezone.utc
+        except ZoneInfoNotFoundError:
+            LOGGER.warning("Unknown exchange timezone %r; using UTC for close fallback", exchange_timezone)
+            market_timezone = timezone.utc
+        current_market_date = datetime.fromtimestamp(
+            timestamp, timezone.utc
+        ).astimezone(market_timezone).date()
+        previous_day_closes = [
+            point["price"]
+            for point in history
+            if datetime.fromisoformat(point["timestamp"].replace("Z", "+00:00"))
+            .astimezone(market_timezone)
+            .date()
+            < current_market_date
+        ]
+        previous_close = previous_day_closes[-1] if previous_day_closes else None
+
+    quote_timestamp = (
+        datetime.fromtimestamp(timestamp, timezone.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+        if timestamp is not None
+        else None
+    )
+    if quote_timestamp:
+        quote_point = {"timestamp": quote_timestamp, "price": float(current_price)}
+        matching_points = [
+            index for index, point in enumerate(history)
+            if point["timestamp"] == quote_timestamp
+        ]
+        if matching_points:
+            history[matching_points[-1]] = quote_point
+        else:
+            history.append(quote_point)
+    history.sort(key=lambda point: point["timestamp"])
+
     change, change_percent, sentiment = sentiment_for_change(
         float(current_price),
         float(previous_close) if previous_close is not None else None,
     )
-    timestamp = metadata.get("regularMarketTime")
-    if timestamp is None:
-        timestamps = result.get("timestamp") or []
-        timestamp = timestamps[-1] if timestamps else None
-
     return {
         "name": name,
         "symbol": symbol,
@@ -95,12 +176,9 @@ def fetch_price(name: str, symbol: str) -> dict[str, object]:
         "currency": metadata.get("currency", "USD"),
         "unit": "barrel",
         "price_timestamp": (
-            datetime.fromtimestamp(timestamp, timezone.utc)
-            .isoformat(timespec="seconds")
-            .replace("+00:00", "Z")
-            if timestamp is not None
-            else None
+            quote_timestamp
         ),
+        "history": history,
         "previous_close": (
             float(previous_close) if previous_close is not None else None
         ),
@@ -134,7 +212,10 @@ def parse_published_at(value: str | None) -> str | None:
 
 
 def parse_feed(
-    source: str, feed_url: str, content: bytes
+    source: str,
+    feed_url: str,
+    content: bytes,
+    keywords: tuple[str, ...] = (),
 ) -> list[dict[str, str | None]]:
     root = ET.fromstring(content)
     articles = []
@@ -143,15 +224,20 @@ def parse_feed(
         link = clean_text(item.findtext("link"))
         if not title or not link:
             continue
+        summary = clean_text(item.findtext("description"))
+        if keywords and not any(
+            keyword in f"{title} {summary}".casefold() for keyword in keywords
+        ):
+            continue
         identifier = clean_text(item.findtext("guid")) or link
         articles.append(
             {
                 "id": f"{source}:{identifier}",
                 "source": source,
                 "title": title,
-                "url": link,
+                "url": urljoin(feed_url, link),
                 "published_at": parse_published_at(item.findtext("pubDate")),
-                "summary": clean_text(item.findtext("description")),
+                "summary": summary,
                 "feed_url": feed_url,
             }
         )
@@ -192,9 +278,15 @@ def collect_cycle(connection: sqlite3.Connection, output_path: Path) -> dict:
             )
 
     news_ids = set()
-    for source, feed_url in NEWS_FEEDS.items():
+    for source, feed_config in NEWS_FEEDS.items():
+        feed_url = feed_config["url"]
         try:
-            articles = parse_feed(source, feed_url, request_bytes(feed_url))
+            articles = parse_feed(
+                source,
+                feed_url,
+                request_bytes(feed_url),
+                feed_config["keywords"],
+            )
             for article in articles:
                 article_id = article["id"]
                 if article_id in news_ids:
