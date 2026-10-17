@@ -654,6 +654,8 @@
           if (article.analysis.assessment_type === "reassessment") {
             head.append(element("span", "analysis-confidence",
               `Reassessed · revision ${article.analysis.revision || 2}`));
+          } else if (article.analysis.assessment_type === "backfill") {
+            head.append(element("span", "analysis-confidence", "Initial review of older story"));
           }
           const confidence = Number(article.analysis.confidence);
           if (Number.isInteger(confidence)) {

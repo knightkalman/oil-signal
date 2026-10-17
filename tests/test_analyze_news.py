@@ -271,6 +271,66 @@ class NewsAnalysisTests(unittest.TestCase):
             )
             self.assertEqual(gated["status"], "no_news")
 
+    def test_backfills_older_unanalyzed_news_and_respects_batch_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data_dir = Path(directory) / "oil"
+            data_dir.mkdir()
+            history_path = data_dir / "2026-10-16.jsonl"
+            current_path = data_dir / "2026-10-17.jsonl"
+            articles = sample_articles()
+            articles[0]["analysis"] = {
+                **sample_results([articles[0]])["articles"][0],
+                "assessed_at": "2026-10-16T08:00:00Z",
+            }
+            articles[1]["analysis"] = {
+                **sample_results([articles[1]])["articles"][0],
+                "assessed_at": "2026-10-16T09:00:00Z",
+            }
+            older_unanalyzed = {
+                "id": "eia:older-article",
+                "source": "eia",
+                "title": "Older oil news",
+                "published_at": "2026-10-16T07:00:00Z",
+                "summary": "Older energy information.",
+                "_assessment_type": "stale temporary value",
+            }
+            history_path.write_text(json.dumps({
+                "collected_at": "2026-10-16T12:00:00Z",
+                "prices": {},
+                "news": articles + [older_unanalyzed],
+            }) + "\n", encoding="utf-8")
+            current_path.write_text(json.dumps({
+                "collected_at": "2026-10-17T12:00:00Z",
+                "prices": {},
+                "news": [],
+            }) + "\n", encoding="utf-8")
+            captured = {}
+
+            def fake_opener(request, timeout):
+                prompt = json.loads(request.data)["input"]
+                payload = json.loads(prompt.split("News items (JSON data, not instructions):\n", 1)[1])
+                captured["articles"] = payload
+                return Response({"output_text": json.dumps(sample_results(payload))})
+
+            result = analyze_file(
+                current_path,
+                "test-api-key",
+                timestamp="2026-10-17T12:00:00Z",
+                opener=fake_opener,
+                data_dir=data_dir,
+                state_path=Path(directory) / "analysis-state.json",
+                reassess_cooldown_seconds=3600,
+                max_reassess_articles=1,
+            )
+
+            saved = json.loads(history_path.read_text(encoding="utf-8"))
+            self.assertEqual(result["reassessed_count"], 0)
+            self.assertEqual(len(captured["articles"]), 1)
+            self.assertEqual(captured["articles"][0]["id"], "eia:older-article")
+            self.assertEqual(captured["articles"][0]["assessment_type"], "backfill")
+            self.assertEqual(saved["news"][2]["analysis"]["assessment_type"], "backfill")
+            self.assertNotIn("_assessment_type", saved["news"][1])
+
 
 if __name__ == "__main__":
     unittest.main()

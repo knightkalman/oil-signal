@@ -337,6 +337,8 @@ def load_archive(
                         observations.append((point_time, price))
             for article in record.get("news", []):
                 if isinstance(article, dict):
+                    article.pop("_assessment_type", None)
+                    article.pop("_market_context", None)
                     articles.append({
                         "path": data_path.resolve(),
                         "line_index": line_index,
@@ -468,10 +470,13 @@ def analyze_file(
                     continue
                 if article.get("id") is not None:
                     pending_ids.add(article["id"])
-                article["_assessment_type"] = "reassessment"
                 eligible.append((baseline, article))
             eligible.sort(key=lambda item: item[0])
-            pending.extend(article for _, article in eligible[:max_reassess_articles])
+            for _, article in eligible[:max_reassess_articles]:
+                article["_assessment_type"] = (
+                    "reassessment" if isinstance(article.get("analysis"), dict) else "backfill"
+                )
+                pending.append(article)
 
     for article in pending:
         article.setdefault("_assessment_type", "new")
