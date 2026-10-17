@@ -158,7 +158,7 @@ def call_agent(
 ) -> dict[str, dict]:
     body = {
         "agent": AGENT,
-        "environment": {"type": "remote"},
+        "environment": "remote",
         "input": make_prompt(articles),
         "tools": [],
         "store": False,
@@ -437,6 +437,13 @@ def analyze_file(
     else:
         try:
             results = call_agent(pending, api_key, opener=opener)
+        except HTTPError as error:
+            details = error.read().decode("utf-8", errors="replace").strip()
+            message = f"HTTPError: {error}"
+            if details:
+                message = f"{message}; response: {details[:1500]}"
+            status = {"status": "failed", "error": message}
+            LOGGER.error("Managed Antigravity news analysis failed: %s", message)
         except (URLError, TimeoutError, OSError, ValueError) as error:
             message = f"{type(error).__name__}: {error}"
             status = {"status": "failed", "error": message}

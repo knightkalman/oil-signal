@@ -86,6 +86,7 @@ class NewsAnalysisTests(unittest.TestCase):
         results = call_agent(articles, "test-api-key", opener=fake_opener)
         self.assertEqual(len(results), 2)
         self.assertEqual(captured["body"]["agent"], AGENT)
+        self.assertEqual(captured["body"]["environment"], "remote")
         self.assertEqual(captured["body"]["tools"], [])
         self.assertFalse(captured["body"]["store"])
         self.assertEqual(captured["headers"]["X-goog-api-key"], "test-api-key")
