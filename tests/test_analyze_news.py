@@ -95,7 +95,7 @@ class NewsAnalysisTests(unittest.TestCase):
                                 "type": "text",
                                 "text": (
                                     "Assessment:\n```json\n"
-                                    + json.dumps(sample_results(articles))
+                                    + json.dumps(sample_results(articles)["articles"])
                                     + "\n```"
                                 ),
                             }],

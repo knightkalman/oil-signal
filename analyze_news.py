@@ -226,12 +226,15 @@ def call_agent(
     output_payload = None
     decoder = json.JSONDecoder()
     for index, character in enumerate(output_text):
-        if character != "{":
+        if character not in "{[":
             continue
         try:
             candidate, _ = decoder.raw_decode(output_text[index:])
         except json.JSONDecodeError:
             continue
+        if isinstance(candidate, list) and all(isinstance(item, dict) for item in candidate):
+            output_payload = {"articles": candidate}
+            break
         if isinstance(candidate, dict) and isinstance(candidate.get("articles"), list):
             output_payload = candidate
             break
