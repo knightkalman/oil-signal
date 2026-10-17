@@ -186,16 +186,32 @@ def call_agent(
         raise ValueError("managed agent response interaction must be a JSON object")
     output_text = interaction.get("output_text")
     if not isinstance(output_text, str):
-        output_items = interaction.get("output") or interaction.get("outputs") or []
-        if isinstance(output_items, list):
-            text_parts = [
-                item["text"]
-                for item in output_items
-                if isinstance(item, dict)
-                and item.get("type") == "text"
-                and isinstance(item.get("text"), str)
-            ]
-            output_text = "\n".join(text_parts) if text_parts else None
+        output_items = (
+            interaction.get("output")
+            or interaction.get("outputs")
+            or interaction.get("steps")
+            or []
+        )
+        text_parts = []
+
+        def collect_text(value: object) -> None:
+            if isinstance(value, list):
+                for item in value:
+                    collect_text(item)
+            elif isinstance(value, dict):
+                if value.get("type") == "text" and isinstance(value.get("text"), str):
+                    text_parts.append(value["text"])
+                elif value.get("type") == "model_output":
+                    content = value.get("content")
+                    if isinstance(content, str):
+                        text_parts.append(content)
+                    else:
+                        collect_text(content)
+                else:
+                    collect_text(value.get("content"))
+
+        collect_text(output_items)
+        output_text = "\n".join(text_parts) if text_parts else None
     if not isinstance(output_text, str):
         raise ValueError(
             "managed agent response did not contain text output "
