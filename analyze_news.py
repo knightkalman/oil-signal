@@ -438,7 +438,10 @@ def analyze_file(
         try:
             results = call_agent(pending, api_key, opener=opener)
         except HTTPError as error:
-            details = error.read().decode("utf-8", errors="replace").strip()
+            try:
+                details = error.read().decode("utf-8", errors="replace").strip()
+            finally:
+                error.close()
             message = f"HTTPError: {error}"
             if details:
                 message = f"{message}; response: {details[:1500]}"

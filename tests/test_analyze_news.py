@@ -1,8 +1,9 @@
 import json
+from io import BytesIO
 from pathlib import Path
 import tempfile
 import unittest
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 
 from analyze_news import AGENT, analyze_file, call_agent, validate_results
 
@@ -130,6 +131,35 @@ class NewsAnalysisTests(unittest.TestCase):
             self.assertEqual(result["status"], "failed")
             self.assertIn("network unavailable", result["error"])
             self.assertEqual(len(saved["news"]), 2)
+
+    def test_http_api_error_body_is_recorded_for_diagnosis(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "collection.jsonl"
+            path.write_text(
+                json.dumps({
+                    "collected_at": "2026-10-16T12:00:00Z",
+                    "news": sample_articles()[:1],
+                }) + "\n",
+                encoding="utf-8",
+            )
+
+            def failing_opener(_request, timeout):
+                raise HTTPError(
+                    "https://example.test",
+                    400,
+                    "Bad Request",
+                    hdrs=None,
+                    fp=BytesIO(b'{"error":"bad request field"}'),
+                )
+
+            result = analyze_file(
+                path,
+                "test-api-key",
+                timestamp="2026-10-16T12:01:00Z",
+                opener=failing_opener,
+            )
+            self.assertEqual(result["status"], "failed")
+            self.assertIn("bad request field", result["error"])
 
     def test_reassesses_old_news_with_price_context_and_preserves_history(self):
         with tempfile.TemporaryDirectory() as directory:
