@@ -125,6 +125,12 @@
     .series-wti, .series-brent { fill: none; stroke-width: 2.6; stroke-linejoin: round; stroke-linecap: round; }
     .series-wti { stroke: var(--green); }
     .series-brent { stroke: var(--blue); }
+    .weekend-carry { fill: none; stroke-width: 2.6; stroke-dasharray: 2 6; stroke-linecap: round; }
+    .weekend-carry-wti { stroke: var(--green); }
+    .weekend-carry-brent { stroke: var(--blue); }
+    .weekend-closed-band { fill: #f3d17c; opacity: 0.08; }
+    .weekend-boundary { stroke: #f3d17c; stroke-width: 1.2; stroke-dasharray: 3 5; opacity: 0.8; }
+    .weekend-label { fill: #f3d17c; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; }
     .point-wti { fill: var(--green); }
     .point-brent { fill: var(--blue); }
     .sentiment-marker { stroke: #101a20; stroke-width: 2; cursor: help; }
@@ -142,6 +148,7 @@
     .legend-item { display: inline-flex; align-items: center; gap: 7px; }
     .legend-line { width: 18px; height: 3px; border-radius: 4px; background: var(--green); }
     .legend-line.brent { background: var(--blue); }
+    .legend-line.weekend { height: 0; border-top: 2px dotted var(--muted); background: transparent; }
     .legend-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--orange); }
     .chart-note, .method-note { color: var(--muted); font-size: 0.82rem; }
     .chart-note { margin: 11px 0 0; }
@@ -235,6 +242,7 @@
           <div class="chart-legend" aria-label="Chart legend">
             <span class="legend-item"><span class="legend-line"></span> WTI crude</span>
             <span class="legend-item"><span class="legend-line brent"></span> Brent crude</span>
+            <span class="legend-item"><span class="legend-line weekend"></span> Market closed · last price carried forward</span>
             <span class="legend-item"><span class="legend-dot"></span> Unassessed news</span>
             <span class="legend-item"><span class="positive">●</span> Bullish news</span>
             <span class="legend-item"><span class="negative">●</span> Bearish news</span>
@@ -258,7 +266,7 @@
         <div class="news-list" id="news-list" aria-live="polite"></div>
       </section>
 
-      <p class="footnote">Price source: Yahoo Finance chart data. Headlines: OilPrice.com, the U.S. Energy Information Administration, BBC Business, and CNBC Business. New headlines are assessed by the managed Antigravity agent; older stories are reviewed hourly in batches of up to 5, with observed price moves shown as context rather than causal evidence. Claims are not independently verified, confidence is not calibrated, and this is not investment advice. Collection and open-dashboard refresh run every five minutes when GitHub Actions and the data provider are available; updates may be delayed.</p>
+      <p class="footnote">Price source: Yahoo Finance chart data and Massive Futures API. Dotted weekend chart segments carry forward the last traded price while WTI futures are closed; they are not live or indicative weekend quotes. Headlines: OilPrice.com, the U.S. Energy Information Administration, BBC Business, and CNBC Business. New headlines are assessed by the managed Antigravity agent; older stories are reviewed hourly in batches of up to 5, with observed price moves shown as context rather than causal evidence. Claims are not independently verified, confidence is not calibrated, and this is not investment advice. Collection and open-dashboard refresh run every five minutes when GitHub Actions and the data provider are available; updates may be delayed.</p>
     </main>
   </div>
 
@@ -275,6 +283,16 @@
       timeStyle: "short",
       timeZone: "UTC"
     });
+    const chicagoDateFormatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Chicago",
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      weekday: "short",
+      hour: "2-digit",
+      hourCycle: "h23"
+    });
+    const chicagoWeekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     let records = [];
     let articles = [];
     let rangeDays = 1;
@@ -283,6 +301,74 @@
       if (!value) return null;
       const date = new Date(value);
       return Number.isFinite(date.getTime()) ? date : null;
+    }
+
+    function chicagoParts(date) {
+      return Object.fromEntries(chicagoDateFormatter.formatToParts(date)
+        .filter(part => part.type !== "literal")
+        .map(part => [part.type, part.value]));
+    }
+
+    function chicagoWallTime(year, month, day, hour) {
+      const desiredUtc = Date.UTC(year, month - 1, day, hour);
+      const observed = chicagoParts(new Date(desiredUtc));
+      const observedUtc = Date.UTC(
+        Number(observed.year),
+        Number(observed.month) - 1,
+        Number(observed.day),
+        Number(observed.hour)
+      );
+      return new Date(desiredUtc - (observedUtc - desiredUtc));
+    }
+
+    function weekendWindowForFriday(year, month, day) {
+      const friday = new Date(Date.UTC(year, month - 1, day));
+      const sunday = new Date(friday.getTime() + 2 * 86400000);
+      return {
+        close: chicagoWallTime(year, month, day, 16),
+        open: chicagoWallTime(
+          sunday.getUTCFullYear(),
+          sunday.getUTCMonth() + 1,
+          sunday.getUTCDate(),
+          17
+        )
+      };
+    }
+
+    function weekendWindowAfter(date) {
+      const parts = chicagoParts(date);
+      const weekday = chicagoWeekdays.indexOf(parts.weekday);
+      const daysSinceFriday = (weekday - 5 + 7) % 7;
+      const localFriday = new Date(Date.UTC(
+        Number(parts.year),
+        Number(parts.month) - 1,
+        Number(parts.day) - daysSinceFriday
+      ));
+      return weekendWindowForFriday(
+        localFriday.getUTCFullYear(),
+        localFriday.getUTCMonth() + 1,
+        localFriday.getUTCDate()
+      );
+    }
+
+    function currentWeekendWindow(now) {
+      const parts = chicagoParts(now);
+      const weekday = chicagoWeekdays.indexOf(parts.weekday);
+      const hour = Number(parts.hour);
+      const daysSinceFriday = weekday === 6 ? 1 : weekday === 0 ? 2 : 0;
+      if (!daysSinceFriday && (weekday !== 5 || hour < 16)) return null;
+      if (weekday === 0 && hour >= 17) return null;
+      const localFriday = new Date(Date.UTC(
+        Number(parts.year),
+        Number(parts.month) - 1,
+        Number(parts.day) - daysSinceFriday
+      ));
+      const window = weekendWindowForFriday(
+        localFriday.getUTCFullYear(),
+        localFriday.getUTCMonth() + 1,
+        localFriday.getUTCDate()
+      );
+      return now >= window.close && now < window.open ? window : null;
     }
 
     function formatDate(value) {
@@ -449,6 +535,22 @@
       }
       const sentimentPoints = [...sentimentHistory.values()];
       const pricePoints = [...histories.values()].sort((a, b) => a.time - b.time);
+      const weekendWindows = new Map();
+      for (const key of ["wti_crude", "brent_crude"]) {
+        const series = pricePoints.filter(point => point.key === key);
+        for (let index = 1; index < series.length; index += 1) {
+          const previous = series[index - 1];
+          const next = series[index];
+          if (next.time - previous.time < 36 * 60 * 60 * 1000) continue;
+          const window = weekendWindowAfter(previous.time);
+          if (previous.time > window.close || next.time < window.open ||
+              window.close - previous.time > 24 * 60 * 60 * 1000 ||
+              next.time - window.open > 24 * 60 * 60 * 1000) continue;
+          weekendWindows.set(window.close.getTime(), window);
+        }
+      }
+      const activeWeekend = currentWeekendWindow(new Date());
+      if (activeWeekend) weekendWindows.set(activeWeekend.close.getTime(), activeWeekend);
       const datedNews = articles.flatMap(article => {
         const time = parseDate(article.published_at) || parseDate(article.first_seen_at);
         return time ? [{ article, time }] : [];
@@ -474,6 +576,13 @@
       }
       let minTime = Math.min(...visiblePoints.map(point => point.time.getTime()));
       let maxTime = Math.max(...visiblePoints.map(point => point.time.getTime()));
+      const visibleWeekendWindows = [...weekendWindows.values()].filter(window =>
+        window.open.getTime() >= minTime &&
+        window.close.getTime() <= maxTime + 24 * 60 * 60 * 1000
+      );
+      for (const window of visibleWeekendWindows) {
+        if (window.open.getTime() > maxTime) maxTime = window.open.getTime();
+      }
       if (minTime === maxTime) {
         minTime -= 12 * 60 * 60 * 1000;
         maxTime += 12 * 60 * 60 * 1000;
@@ -506,14 +615,89 @@
         chart.append(svgElement("text", { x: left - 10, y: lineY + 4, "text-anchor": "end", class: "axis-text" }, `$${value.toFixed(0)}`));
       }
 
+      for (const window of visibleWeekendWindows) {
+        const closeX = x(window.close);
+        const openX = x(window.open);
+        const bandStart = Math.max(left, closeX);
+        const bandEnd = Math.min(width - right, openX);
+        if (bandEnd <= bandStart) continue;
+        chart.append(svgElement("rect", {
+          x: bandStart,
+          y: top,
+          width: bandEnd - bandStart,
+          height: bottom - top,
+          class: "weekend-closed-band"
+        }));
+        chart.append(svgElement("line", {
+          x1: Math.max(left, closeX),
+          x2: Math.max(left, closeX),
+          y1: top,
+          y2: bottom,
+          class: "weekend-boundary"
+        }));
+        chart.append(svgElement("line", {
+          x1: Math.min(width - right, openX),
+          x2: Math.min(width - right, openX),
+          y1: top,
+          y2: bottom,
+          class: "weekend-boundary"
+        }));
+        chart.append(svgElement("text", {
+          x: (bandStart + bandEnd) / 2,
+          y: top + 15,
+          "text-anchor": "middle",
+          class: "weekend-label"
+        }, "MARKET CLOSED"));
+        chart.append(svgElement("text", {
+          x: Math.min(width - right, openX),
+          y: top + 30,
+          "text-anchor": openX > width - right - 65 ? "end" : "middle",
+          class: "weekend-label"
+        }, "REOPENS"));
+      }
+
       for (const key of ["wti_crude", "brent_crude"]) {
         const series = visiblePoints.filter(point => point.key === key);
         if (!series.length) continue;
         const className = key === "wti_crude" ? "wti" : "brent";
-        const path = series.map((point, index) =>
-          `${index === 0 ? "M" : "L"} ${x(point.time).toFixed(1)} ${y(point.value).toFixed(1)}`
-        ).join(" ");
-        chart.append(svgElement("path", { d: path, class: `series-${className}` }));
+        const solidPaths = [];
+        let path = `M ${x(series[0].time).toFixed(1)} ${y(series[0].value).toFixed(1)}`;
+        for (let index = 1; index < series.length; index += 1) {
+          const previous = series[index - 1];
+          const point = series[index];
+          const weekend = visibleWeekendWindows.find(window =>
+            previous.time <= window.close && point.time >= window.open
+          );
+          if (!weekend) {
+            path += ` L ${x(point.time).toFixed(1)} ${y(point.value).toFixed(1)}`;
+            continue;
+          }
+          path += ` L ${x(weekend.close).toFixed(1)} ${y(previous.value).toFixed(1)}`;
+          solidPaths.push(path);
+          chart.append(svgElement("path", {
+            d: `M ${x(weekend.close).toFixed(1)} ${y(previous.value).toFixed(1)} L ${x(weekend.open).toFixed(1)} ${y(previous.value).toFixed(1)}`,
+            class: `weekend-carry weekend-carry-${className}`
+          }));
+          path = `M ${x(point.time).toFixed(1)} ${y(point.value).toFixed(1)}`;
+        }
+        const currentWindow = activeWeekend && visibleWeekendWindows.includes(activeWeekend)
+          ? activeWeekend
+          : null;
+        const latestPoint = series.at(-1);
+        if (currentWindow && latestPoint.time <= currentWindow.close &&
+            currentWindow.close - latestPoint.time <= 24 * 60 * 60 * 1000) {
+          path += ` L ${x(currentWindow.close).toFixed(1)} ${y(latestPoint.value).toFixed(1)}`;
+          solidPaths.push(path);
+          chart.append(svgElement("path", {
+            d: `M ${x(currentWindow.close).toFixed(1)} ${y(latestPoint.value).toFixed(1)} L ${x(currentWindow.open).toFixed(1)} ${y(latestPoint.value).toFixed(1)}`,
+            class: `weekend-carry weekend-carry-${className}`
+          }));
+        } else {
+          solidPaths.push(path);
+        }
+        for (const solidPath of solidPaths) {
+          chart.append(svgElement("path", { d: solidPath, class: `series-${className}` }));
+        }
         if (series.length === 1) {
           chart.append(svgElement("circle", { cx: x(series[0].time), cy: y(series[0].value), r: 4, class: `point-${className}` }));
         }
@@ -659,7 +843,10 @@
       const newsCoverageNote = outsideCoverageNews.length
         ? ` ${outsideCoverageNews.length} news stories outside the price-history window are shown in a separate timeline.`
         : "";
-      chartNote.textContent = `${visiblePoints.length} collected price observations shown for the ${visibleHours}. Price history spans ${formatDate(historyStartTime)} to ${formatDate(historyEndTime)}.${newsCoverageNote} Latest provider quote: ${formatDate(latestProviderTime)}. News markers are colored by the latest Antigravity assessment; price triangles show direction versus the previous daily close.`;
+      const weekendNote = visibleWeekendWindows.length
+        ? ` Market closed ${formatDate(visibleWeekendWindows[0].close)} until ${formatDate(visibleWeekendWindows[0].open)}; dotted segments carry forward the last traded price, not live weekend quotes.`
+        : "";
+      chartNote.textContent = `${visiblePoints.length} collected price observations shown for the ${visibleHours}. Price history spans ${formatDate(historyStartTime)} to ${formatDate(historyEndTime)}.${weekendNote}${newsCoverageNote} Latest provider quote: ${formatDate(latestProviderTime)}. News markers are colored by the latest Antigravity assessment; price triangles show direction versus the previous daily close.`;
     }
 
     function safeLink(value) {
