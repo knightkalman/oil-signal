@@ -1224,6 +1224,20 @@ def build_api_artifacts(
     return envelope
 
 
+def load_local_env(env_path: Path = Path(".env.local")) -> None:
+    if not env_path.exists():
+        return
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.removeprefix("export ").strip()
+        value = value.strip().strip("'").strip('"')
+        if key:
+            os.environ.setdefault(key, value)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Build the API-key-encrypted Oil Signal API for GitHub Pages."
@@ -1247,6 +1261,7 @@ def main() -> None:
     )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    load_local_env()
 
     api_key = os.environ.get("OIL_SIGNAL_API_KEY")
     envelope = build_api_artifacts(
