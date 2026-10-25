@@ -153,6 +153,66 @@ price chart. GitHub Actions and the provider can delay five-minute
 updates; an open dashboard re-fetches the published data every five minutes.
 This is scheduled collection, not a live quote stream.
 
+### Agent API (`https://knightkalman.github.io/oil-signal/api/`)
+
+The `Oil monitor` workflow also builds an API-key-protected endpoint for
+third-party agents at
+[`https://knightkalman.github.io/oil-signal/api/`](https://knightkalman.github.io/oil-signal/api/)
+(with the encrypted envelope at
+`https://knightkalman.github.io/oil-signal/api/index.json`).
+
+During deployment, `build_api.py` aggregates `data/oil/*.jsonl` and encrypts the
+structured JSON payload using `AES-256-GCM` with a 256-bit key derived from the
+repository secret `OIL_SIGNAL_API_KEY` via `PBKDF2-HMAC-SHA256` (210,000
+iterations). If `OIL_SIGNAL_API_KEY` is not set, `build_api.py` fails closed and
+writes an `unauthorized_stub` record without publishing any plaintext API data.
+
+Once decrypted with `OIL_SIGNAL_API_KEY`, the API payload provides:
+
+- `prices` — latest WTI (`CL=F`) and Brent (`BZ=F`) prices, change versus the
+  previous daily close, quote validity (`valid`, `stale`, or `insufficient`),
+  and provider observations.
+- `price_direction_compression` — run-length encoded directional regimes
+  (`regime_segments` and `current_regime`), directional `inflection_points`,
+  point-to-point `step_changes` across deduplicated observations, and `24h`,
+  `7d`, `30d`, and `all` OHLC `window_summaries`.
+- `chart_data` — deduplicated time-series rows and Chicago-timezone weekend
+  market-closed carry-forward windows matching the interactive chart.
+- `news_sentiment` — aggregate headline sentiment counts (`by_direction`,
+  `recent_24h`, `net_sentiment_score`, and
+  `confidence_weighted_sentiment_score`) plus the full list of collected
+  articles and their latest Antigravity AI assessments (`direction`,
+  `confidence`, `validity`, `summary`, `rationale`, and post-publication
+  `market_context`).
+
+#### Consuming the API from a Python agent
+
+```sh
+OIL_SIGNAL_API_KEY="your-api-key" python3 oil_signal_client.py
+```
+
+Or import `fetch_oil_signal_api` directly:
+
+```python
+from oil_signal_client import fetch_oil_signal_api
+
+data = fetch_oil_signal_api(
+    api_key="your-api-key",
+    endpoint="https://knightkalman.github.io/oil-signal/api/",
+)
+print(data["prices"]["wti_crude"])
+print(data["price_direction_compression"]["wti_crude"]["current_regime"])
+print(data["news_sentiment"]["summary"])
+```
+
+#### Consuming the API from a browser-capable agent
+
+Open `https://knightkalman.github.io/oil-signal/api/?api_key=<OIL_SIGNAL_API_KEY>`
+(or `#api_key=<OIL_SIGNAL_API_KEY>`). The static gateway decrypts `index.json`
+in memory via Web Crypto (`crypto.subtle`), strips the key from the URL bar,
+exposes `window.OIL_SIGNAL_API_DATA`, and renders the decrypted JSON inside
+`<pre id="oil-signal-api-json">`.
+
 ### Run as a user service on Linux with systemd
 
 From the project directory, install and start the included service:
