@@ -339,6 +339,68 @@ class BuildApiTests(unittest.TestCase):
             )
             self.assertEqual(result["prices"]["wti_crude"]["price"], 102.5)
             self.assertEqual(result["news_sentiment"]["summary"]["total_stories"], 3)
+            # Verify new dynamics and source verification fields exist in payload
+            self.assertIn("dynamics", result["news_sentiment"])
+            self.assertIn("source_verification", result["news_sentiment"])
+            self.assertIn("decay_weighted_score", result["news_sentiment"]["summary"])
+
+    def test_news_sentiment_decay_velocity_and_verification(self) -> None:
+        from build_api import build_news_sentiment
+        ref_time = datetime(2026, 10, 24, 12, 0, 0, tzinfo=timezone.utc)
+        records = [
+            {
+                "schema_version": 1,
+                "collected_at": "2026-10-24T11:30:00Z",
+                "news": [
+                    {
+                        "id": "reuters:story-1",
+                        "published_at": "2026-10-24T11:30:00Z",
+                        "analysis": {
+                            "direction": "bullish",
+                            "confidence": 90,
+                            "catalyst_category": "structural_supply_demand",
+                            "surprise_factor": "major_surprise",
+                            "temporal_horizon": "flash_intraday",
+                            "source_tier": 1,
+                        },
+                    },
+                    {
+                        "id": "bloomberg:story-2",
+                        "published_at": "2026-10-24T08:00:00Z",
+                        "analysis": {
+                            "direction": "bearish",
+                            "confidence": 60,
+                            "catalyst_category": "geopolitical_macro",
+                            "surprise_factor": "inline_expected",
+                            "temporal_horizon": "multi_day_drift",
+                            "source_tier": 2,
+                        },
+                    },
+                ],
+            }
+        ]
+        sentiment = build_news_sentiment(records, ref_time)
+        summary = sentiment["summary"]
+        dynamics = sentiment["dynamics"]
+        verification = sentiment["source_verification"]
+
+        self.assertEqual(summary["total_stories"], 2)
+        self.assertEqual(summary["assessed_stories"], 2)
+        self.assertGreater(summary["decay_weighted_score"], 0.0)  # Recent strong tier-1 bullish story dominates
+        self.assertIn("velocity_1h", dynamics)
+        self.assertIn("velocity_6h", dynamics)
+        self.assertIn("acceleration", dynamics)
+        self.assertGreater(dynamics["velocity_1h"], 0.0)
+        self.assertEqual(verification["tier1_confirmations"], 1)
+        self.assertEqual(verification["tier2_confirmations"], 1)
+        self.assertTrue(verification["has_tier1_validation"])
+        self.assertIn("structural_supply_demand", dynamics["catalyst_breakdown"])
+
+        # Test zero/empty edge case
+        empty_sentiment = build_news_sentiment([], ref_time)
+        self.assertEqual(empty_sentiment["summary"]["decay_weighted_score"], 0.0)
+        self.assertEqual(empty_sentiment["dynamics"]["velocity_1h"], 0.0)
+        self.assertFalse(empty_sentiment["source_verification"]["has_tier1_validation"])
 
 
 if __name__ == "__main__":

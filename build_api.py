@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import secrets
@@ -38,6 +39,29 @@ BENCHMARKS = (
     ("brent_crude", "Brent crude", "BZ=F"),
 )
 ALLOWED_DIRECTIONS = ("bullish", "bearish", "mixed", "neutral", "unclear")
+HALF_LIVES_HOURS = {
+    "flash_intraday": 4.0,
+    "multi_day_drift": 24.0,
+    "structural_macro": 72.0,
+}
+TIER_MULTIPLIERS = {
+    1: 1.2,
+    2: 1.0,
+    3: 0.6,
+    4: 0.2,
+}
+SURPRISE_MULTIPLIERS = {
+    "major_surprise": 1.5,
+    "contrarian_reversal": 1.4,
+    "moderate_surprise": 1.1,
+    "inline_expected": 0.8,
+}
+SURPRISE_VALUES = {
+    "major_surprise": 1.0,
+    "contrarian_reversal": 0.85,
+    "moderate_surprise": 0.5,
+    "inline_expected": 0.1,
+}
 
 
 def utc_now() -> str:
@@ -743,6 +767,24 @@ def build_news_sentiment(records: list[dict], reference_time: datetime) -> dict:
     weighted_num = 0.0
     weighted_den = 0.0
 
+    decay_num = 0.0
+    decay_den = 0.0
+
+    surprise_num = 0.0
+    surprise_den = 0.0
+
+    tier1_confirmations = 0
+    tier2_confirmations = 0
+
+    catalyst_weights: dict[str, dict[str, float]] = {}
+
+    win_1h_num = 0.0
+    win_1h_den = 0.0
+    win_6h_num = 0.0
+    win_6h_den = 0.0
+    win_24h_num = 0.0
+    win_24h_den = 0.0
+
     for article in sorted_articles:
         analysis = article.get("analysis")
         direction = (
@@ -751,18 +793,64 @@ def build_news_sentiment(records: list[dict], reference_time: datetime) -> dict:
         bucket = direction if direction in ALLOWED_DIRECTIONS else "unassessed"
         counts[bucket] += 1
 
+        pub_dt = parse_time(article.get("published_at") or article.get("first_seen_at"))
+        elapsed_hours = (
+            max(0.0, (reference_time - pub_dt).total_seconds() / 3600.0)
+            if pub_dt is not None
+            else 0.0
+        )
+
         if isinstance(analysis, dict) and direction in ALLOWED_DIRECTIONS:
             confidence = analysis.get("confidence")
-            weight = (
+            conf_weight = (
                 float(confidence) / 100.0
                 if isinstance(confidence, (int, float)) and 0 <= confidence <= 100
                 else 0.5
             )
             score = 1.0 if direction == "bullish" else -1.0 if direction == "bearish" else 0.0
-            weighted_num += score * weight
-            weighted_den += weight
+            weighted_num += score * conf_weight
+            weighted_den += conf_weight
 
-        pub_dt = parse_time(article.get("published_at") or article.get("first_seen_at"))
+            # Exponential decay & source/surprise weighting
+            horizon = analysis.get("temporal_horizon") or "multi_day_drift"
+            half_life = HALF_LIVES_HOURS.get(horizon, 24.0)
+            decay = math.exp(-math.log(2.0) * elapsed_hours / half_life)
+
+            tier = analysis.get("source_tier") or 2
+            m_tier = TIER_MULTIPLIERS.get(tier, 1.0)
+
+            surprise = analysis.get("surprise_factor") or "inline_expected"
+            m_surprise = SURPRISE_MULTIPLIERS.get(surprise, 1.0)
+            surprise_val = SURPRISE_VALUES.get(surprise, 0.1)
+
+            eff_weight = decay * conf_weight * m_tier * m_surprise
+            decay_num += score * eff_weight
+            decay_den += eff_weight
+
+            surprise_num += surprise_val * eff_weight
+            surprise_den += eff_weight
+
+            if tier == 1:
+                tier1_confirmations += 1
+            elif tier == 2:
+                tier2_confirmations += 1
+
+            cat = analysis.get("catalyst_category") or "speculative_commentary"
+            if cat not in catalyst_weights:
+                catalyst_weights[cat] = {"num": 0.0, "den": 0.0}
+            catalyst_weights[cat]["num"] += score * eff_weight
+            catalyst_weights[cat]["den"] += eff_weight
+
+            if elapsed_hours <= 1.0:
+                win_1h_num += score * eff_weight
+                win_1h_den += eff_weight
+            if elapsed_hours <= 6.0:
+                win_6h_num += score * eff_weight
+                win_6h_den += eff_weight
+            if elapsed_hours <= 24.0:
+                win_24h_num += score * eff_weight
+                win_24h_den += eff_weight
+
         if pub_dt is not None and pub_dt >= recent_cutoff:
             recent_total += 1
             recent_counts[bucket] += 1
@@ -776,6 +864,9 @@ def build_news_sentiment(records: list[dict], reference_time: datetime) -> dict:
     confidence_weighted_score = (
         round(weighted_num / weighted_den, 4) if weighted_den > 0 else 0.0
     )
+    decay_weighted_score = (
+        round(decay_num / decay_den, 4) if decay_den > 0.0 else 0.0
+    )
 
     dominant_direction = "unassessed"
     if assessed_total > 0:
@@ -783,6 +874,23 @@ def build_news_sentiment(records: list[dict], reference_time: datetime) -> dict:
             ALLOWED_DIRECTIONS,
             key=lambda d: (counts[d], 1 if d in ("bullish", "bearish") else 0),
         )
+
+    score_1h = round(win_1h_num / win_1h_den, 4) if win_1h_den > 0.0 else 0.0
+    score_6h = round(win_6h_num / win_6h_den, 4) if win_6h_den > 0.0 else 0.0
+    score_24h = round(win_24h_num / win_24h_den, 4) if win_24h_den > 0.0 else 0.0
+
+    velocity_1h = round(score_1h - score_6h, 4)
+    velocity_6h = round(score_6h - score_24h, 4)
+    acceleration = round(velocity_1h - velocity_6h, 4)
+    surprise_index = (
+        round(surprise_num / surprise_den, 4) if surprise_den > 0.0 else 0.0
+    )
+
+    catalyst_breakdown = {
+        cat: round(data["num"] / data["den"], 4)
+        for cat, data in sorted(catalyst_weights.items())
+        if data["den"] > 0.0
+    }
 
     return {
         "summary": {
@@ -792,10 +900,24 @@ def build_news_sentiment(records: list[dict], reference_time: datetime) -> dict:
             "dominant_direction": dominant_direction,
             "net_sentiment_score": net_score,
             "confidence_weighted_sentiment_score": confidence_weighted_score,
+            "confidence_weighted_score": confidence_weighted_score,
+            "decay_weighted_score": decay_weighted_score,
             "recent_24h": {
                 "total": recent_total,
                 **recent_counts,
             },
+        },
+        "dynamics": {
+            "velocity_1h": velocity_1h,
+            "velocity_6h": velocity_6h,
+            "acceleration": acceleration,
+            "surprise_index": surprise_index,
+            "catalyst_breakdown": catalyst_breakdown,
+        },
+        "source_verification": {
+            "tier1_confirmations": tier1_confirmations,
+            "tier2_confirmations": tier2_confirmations,
+            "has_tier1_validation": tier1_confirmations > 0,
         },
         "articles": sorted_articles,
     }

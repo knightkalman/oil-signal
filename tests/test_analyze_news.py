@@ -37,6 +37,10 @@ def sample_results(articles):
                 "confidence": 72,
                 "validity": "supported",
                 "rationale": "The supplied text reports a crude supply disruption.",
+                "catalyst_category": "structural_supply_demand",
+                "surprise_factor": "major_surprise",
+                "temporal_horizon": "multi_day_drift",
+                "source_tier": 2,
             }
             for article in articles
         ]
@@ -73,6 +77,27 @@ class NewsAnalysisTests(unittest.TestCase):
         invalid["articles"][0]["confidence"] = 101
         with self.assertRaisesRegex(ValueError, "confidence"):
             validate_results(invalid, articles)
+
+        # Test new fields validation
+        invalid_cat = sample_results(articles)
+        invalid_cat["articles"][0]["catalyst_category"] = "bad_cat"
+        with self.assertRaisesRegex(ValueError, "catalyst_category"):
+            validate_results(invalid_cat, articles)
+
+        invalid_sur = sample_results(articles)
+        invalid_sur["articles"][0]["surprise_factor"] = "bad_surprise"
+        with self.assertRaisesRegex(ValueError, "surprise_factor"):
+            validate_results(invalid_sur, articles)
+
+        invalid_hor = sample_results(articles)
+        invalid_hor["articles"][0]["temporal_horizon"] = "bad_horizon"
+        with self.assertRaisesRegex(ValueError, "temporal_horizon"):
+            validate_results(invalid_hor, articles)
+
+        invalid_tier = sample_results(articles)
+        invalid_tier["articles"][0]["source_tier"] = 5
+        with self.assertRaisesRegex(ValueError, "source_tier"):
+            validate_results(invalid_tier, articles)
 
     def test_agent_request_disables_tools_and_uses_required_interaction_storage(self):
         articles = sample_articles()
